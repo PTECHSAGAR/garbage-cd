@@ -1,14 +1,28 @@
 #include "memory/heap.hpp"
 
-// Sweep phase of the mark-sweep collector. Owned by Akshat.
-// Not implemented yet -- currently a no-op.
-
 namespace memory {
 
 void Heap::sweep() {
-    // TODO(Akshat): reclaim every unmarked object, clear marked bits on
-    // survivors, and update stats_ (objectsCollectedLastRun,
-    // liveObjectsAfterLastRun).
+    std::size_t collected = 0;
+    std::size_t live = 0;
+
+    for (std::size_t i = 0; i < objects_.size(); ++i) {
+        if (!slotInUse_[i] || objects_[i] == nullptr) {
+            continue;
+        }
+
+        if (objects_[i]->marked) {
+            objects_[i]->marked = false;
+            ++live;
+        } else {
+            objects_[i].reset();
+            slotInUse_[i] = false;
+            ++collected;
+        }
+    }
+
+    stats_.objectsCollectedLastRun = collected;
+    stats_.liveObjectsAfterLastRun = live;
 }
 
 } // namespace memory
