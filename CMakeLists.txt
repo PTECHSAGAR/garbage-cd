@@ -28,3 +28,8 @@ add_executable(gc_tests tests/gc_tests.cpp ${CORE_SOURCES})
 
 add_test(NAME interpreter_tests COMMAND interpreter_tests)
 add_test(NAME gc_tests COMMAND gc_tests)
+
+option(GCD_V2 "Build V2 tooling" ON)
+if(GCD_V2)
+  include(${CMAKE_SOURCE_DIR}/cmake/gcd_v2.cmake)
+endif()

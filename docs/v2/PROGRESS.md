@@ -1,0 +1,27 @@
+# V2 implementation progress
+
+## T1 — baseline, correctness suite, diagnostics, minimal runner
+
+### Verification (no source edits)
+
+- HEAD is `7f46d69f5fd269eeb65dc2686dcd4a0bc970604c`, matching Document B.1.
+- The tracked file count is 25, not the 24 stated in Document B.1; the tracked paths are the V1 paths listed by `git ls-files`. The supplied `PLAN.md` is untracked.
+- The plan was supplied at repository-root `PLAN.md`; `docs/v2/PLAN.md` does not exist. Per user direction, root `PLAN.md` is treated as canonical. This path discrepancy is recorded rather than moving or copying the plan.
+- The baseline Debug build with `-Wall -Wextra -Wpedantic` passed, and both existing CTest tests passed.
+- The ASan+UBSan Debug build, both CTest tests, and the sample program passed.
+- Document B.7 functional probes matched: sample (2 allocations, 1 collection, 2 freed, 0 live); self-cycle/chain probe (1 freed, 2 live); unreachable two-object cycle (2 freed); runtime, parser, lexer, and integer-overflow errors each abort with exit 134; empty input exits 0; default path from `build/` exits 1.
+- Collection timings on this macOS/AppleClang host were 19.03 ms, 28.64 ms, and 47.54 ms after 1M, 3M, and 6M allocations. These differ from the Linux/GCC audit measurements (3.1 ms, 9.8 ms, 20.1 ms); they are environment-specific and still increase with total slot count.
+- Local tag `v1-baseline` points to `7f46d69f5fd269eeb65dc2686dcd4a0bc970604c`. Work is on local branch `v2`.
+- Toolchain: CMake 4.4.4 and Node 22.23.3 installed with Homebrew; Temurin JDK 21.0.12.1 installed under `~/.jdk/temurin-21`.
+
+### Plan deviations
+
+- Repository plan location and tracked-file count differ from the text in J.0/Document B.1 as described above. The user approved treating root `PLAN.md` as canonical and continuing.
+- Baseline timings are not numerically comparable to the audit host; no behavior difference was observed.
+
+### T1 status
+
+- Steps A–E: not started.
+- Commands: baseline Debug build/test passed; baseline ASan+UBSan build/test/sample passed; B.7 probes passed functionally.
+- Acceptance: pending T1 implementation and its required Debug, Release, ASan, property-test, runner, and schema gates.
+- Open issues: none beyond the noted baseline discrepancies.
