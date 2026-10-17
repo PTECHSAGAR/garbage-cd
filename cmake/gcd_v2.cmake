@@ -15,7 +15,7 @@ endif()
 
 function(gcd_v2_add_executable target source)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
-        set(target_sources "${source}" ${CORE_SOURCES})
+        set(target_sources "${source}" ${ARGN} ${CORE_SOURCES})
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/memory/diagnostics.cpp")
             list(APPEND target_sources src/memory/diagnostics.cpp)
         endif()
@@ -42,7 +42,25 @@ endif()
 gcd_v2_add_executable(gc_correctness_tests tests/v2/gc_correctness_tests.cpp)
 gcd_v2_add_executable(gc_property_tests tests/v2/gc_property_tests.cpp)
 gcd_v2_add_executable(diagnostics_tests tests/v2/diagnostics_tests.cpp)
-gcd_v2_add_executable(gcd_runner tools/gcd_runner/main.cpp)
+gcd_v2_add_executable(
+    gcd_runner tools/gcd_runner/main.cpp
+    tools/gcd_runner/tracing_heap.cpp
+    tools/gcd_runner/spans.cpp
+    tools/gcd_runner/toy_ast_json.cpp)
+
+if(TARGET gcd_runner)
+    execute_process(
+        COMMAND git rev-parse --short=12 HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE GCD_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE GCD_GIT_RESULT
+        ERROR_QUIET)
+    if(NOT GCD_GIT_RESULT EQUAL 0)
+        set(GCD_GIT_COMMIT "unknown")
+    endif()
+    target_compile_definitions(gcd_runner PRIVATE GCD_GIT_COMMIT="${GCD_GIT_COMMIT}")
+endif()
 
 foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_tests)
     if(TARGET ${test_target})
@@ -51,8 +69,16 @@ foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_
 endforeach()
 
 if(TARGET gcd_runner AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tests.sh")
+    find_program(GCD_NODE_EXECUTABLE
+        NAMES node
+        PATHS /opt/homebrew/opt/node@22/bin /usr/local/opt/node@22/bin
+        NO_DEFAULT_PATH)
+    if(NOT GCD_NODE_EXECUTABLE)
+        find_program(GCD_NODE_EXECUTABLE NAMES node)
+    endif()
     add_test(
         NAME runner_tests
-        COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tests.sh"
+        COMMAND ${CMAKE_COMMAND} -E env "NODE=${GCD_NODE_EXECUTABLE}"
+                bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tests.sh"
                 "$<TARGET_FILE:gcd_runner>" "$<TARGET_FILE:garbage_cd>")
 endif()

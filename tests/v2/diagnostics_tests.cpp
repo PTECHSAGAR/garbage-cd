@@ -62,10 +62,29 @@ void testOneLiveObjectAfterOneMillionGarbageSlots() {
     CHECK_EQ(heap.getStats().objectsCollectedLastRun, garbageCount);
 }
 
+void testFieldNodeAccounting() {
+    memory::Heap heap;
+    const auto first = heap.allocate();
+    const auto second = heap.allocate();
+    heap.setField(first, "next", second);
+    heap.setField(first, "next", second);
+    heap.setField(second, "next", first);
+    heap.setRoot("first", first);
+    heap.collect();
+    CHECK_EQ(heap.diagnostics().currentFieldNodes, 2U);
+    CHECK_EQ(heap.diagnostics().collections.back().fieldNodesFreed, 0U);
+
+    heap.clearRoot("first");
+    heap.collect();
+    CHECK_EQ(heap.diagnostics().currentFieldNodes, 0U);
+    CHECK_EQ(heap.diagnostics().collections.back().fieldNodesFreed, 2U);
+}
+
 } // namespace
 
 int main() {
     testFiveObjectGraphCounters();
     testOneLiveObjectAfterOneMillionGarbageSlots();
+    testFieldNodeAccounting();
     std::cout << "diagnostics_tests: all checks passed\n";
 }

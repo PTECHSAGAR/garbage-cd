@@ -15,6 +15,7 @@ struct CollectionRecord {
     std::uint64_t refsPushed = 0;
     std::uint64_t worklistPeak = 0;
     std::uint64_t slotsScanned = 0;
+    std::uint64_t fieldNodesFreed = 0;
     std::uint64_t markNs = 0;
     std::uint64_t sweepNs = 0;
     std::uint64_t totalNs = 0;
@@ -22,6 +23,7 @@ struct CollectionRecord {
 
 struct GcDiagnostics {
     std::vector<CollectionRecord> collections;
+    std::uint64_t currentFieldNodes = 0;
 };
 
 } // namespace memory

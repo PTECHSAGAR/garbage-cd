@@ -24,7 +24,11 @@ void Heap::clearRoot(const std::string& name) {
 void Heap::setField(gc::ObjectHandle obj, const std::string& field, gc::ObjectHandle target) {
     Object* object = resolve(obj);
     if (object != nullptr) {
+        const bool isNewField = object->fields().find(field) == object->fields().end();
         object->setField(field, target);
+        if (isNewField) {
+            ++diagnostics_.currentFieldNodes;
+        }
     }
 }
 
