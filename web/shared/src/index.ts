@@ -85,6 +85,7 @@ export interface AstNode {
   id: number;
   kind: string;
   label?: string;
+  synthetic?: boolean;
   span?: {
     start: number;
     end: number;

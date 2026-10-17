@@ -423,7 +423,7 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
       await mkdir(runDir, { mode: 0o700 });
       const analysis = request.body.engine === "custom"
         ? analyzeToy(request.body.source)
-        : await analyzeJavaSource(config, request.body.source, runDir);
+        : await analyzeJavaSource(config, request.body.source, runDir, undefined, true);
       const errors = validator.validate("static-analysis.schema.json", analysis);
       if (errors.length > 0) {
         request.log.error({ errors }, "Static-analysis result failed schema validation");

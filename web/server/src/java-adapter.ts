@@ -62,7 +62,8 @@ export async function analyzeJavaSource(
   config: Config,
   source: string,
   runDir: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  parseOnly = false
 ): Promise<AnalyzerResult["staticAnalysis"]> {
   const sourcePath = join(runDir, "Submission.java");
   const analysisPath = join(runDir, "analysis.json");
@@ -81,8 +82,7 @@ export async function analyzeJavaSource(
     sourcePath,
     "--analysis",
     analysisPath,
-    "--classes",
-    classesPath
+    ...(parseOnly ? ["--parse-only"] : ["--classes", classesPath])
   ], { cpuSeconds: 20, fileBytes: 64 * 1024 * 1024, openFiles: 256 });
   const result = await runProcess(command.command, command.args, {
     cwd: runDir,

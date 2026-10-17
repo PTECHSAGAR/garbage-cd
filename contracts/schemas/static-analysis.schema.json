@@ -81,6 +81,7 @@
         "kind": { "type": "string" },
         "label": { "type": "string", "maxLength": 80 },
         "span": { "$ref": "#/$defs/span" },
+        "synthetic": { "const": true },
         "children": {
           "type": "array",
           "items": { "$ref": "#/$defs/astNode" }

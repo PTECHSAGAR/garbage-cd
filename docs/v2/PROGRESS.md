@@ -166,3 +166,12 @@ I.4; C.3; D.3–D.6; D.10; H.1–H.6; G.3. This brief keeps the specified two-en
 - Platform limitation: `prlimit` is Linux-only; this macOS host reports `unsupported-platform` in `limits.prlimit`. Linux process-limit coverage is not claimed. The OOM case relies on `-Xmx` plus `ExitOnOutOfMemoryError`, not prlimit.
 - Not verified here: a curl-level run against a started server (tests use Fastify `inject` with loopback host headers), and the "JDK missing" case is covered via a nonexistent `javaPath`, not by removing `java` from `PATH`.
 - Known gap: `toolVersions.jdk` reads `GCD_JDK_VERSION` from the environment and is `unknown` unless set, even though health probes the real version.
+
+## Phase 3 — Java source analysis
+
+- `java/analyzer/AstBuilder.java` converts javac trees (`TreeScanner`, `SourcePositions`, `LineMap`) to the D.5 `AstNode` JSON: kind = `Tree.Kind`, per-kind labels (identifiers, member names, literals, primitive types, modifiers) truncated to 80 chars, compiler spans (UTF-16 offsets; columns use javac's `LineMap`, which expands tabs), `NOPOS` nodes kept with `synthetic: true` and no span. Selection is breadth-first capped at 5,000 nodes; ids are pre-order over the kept nodes; truncation adds an `AST_TRUNCATED` note diagnostic. The analyzer runs on a 256 MiB-stack thread to survive deeply nested expressions.
+- Two paths: the full run path rebuilds the AST after `analyze()` so the implicit default constructor appears (flagged synthetic); `POST /api/analyze` uses a new `--parse-only` analyzer flag (parse-time syntax diagnostics, no compile, no implicit constructor).
+- Contract/type changes: `synthetic` added to the `astNode` schema and shared `AstNode` type.
+- Tests (`web/server/test/analyze.test.ts`, 16): golden AST JSON for the 5 samples (`test/golden/`, regenerate with `UPDATE_GOLDEN=1`), span round-trip/containment, contiguous ids, synthetic constructor, 6,000-element initializer truncating to exactly 5,000 nodes, syntax-error location, and a ~300-line program analyzed in <2 s on this host. `vitest.config.ts` now runs test files sequentially because the orphan-process check is machine-wide.
+- Gates: `./java/build.sh`, `npm run build`, `npm run lint`, `npm test` (39/39) pass with JDK 21 and Node 22; no orphan processes.
+- Deviations/limits: `routes/analyze.ts` was not split out (the route stays in `server.ts`). A `StackOverflowError` while building the AST yields `ast: null` rather than failing the run; that path is untested. The 2 s check is a timing assertion on one host and may be flaky under load.

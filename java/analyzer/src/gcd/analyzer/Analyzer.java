@@ -51,31 +51,56 @@ public final class Analyzer {
         String mainClass;
         String publicTypeName;
         String packageName;
+        AstBuilder.Result ast;
+        CompilationUnitTree unit;
     }
 
     public static void main(String[] args) {
-        int exitCode = 0;
+        final int[] exitCode = {0};
+        // Deeply nested expressions recurse deeply in javac and the tree scanner.
+        Thread worker = new Thread(null, () -> {
+            try {
+                exitCode[0] = run(args);
+            } catch (Exception exception) {
+                System.err.println("analyzer error: " + exception.getMessage());
+                exitCode[0] = 4;
+            }
+        }, "analyzer", 256L * 1024 * 1024);
+        worker.start();
         try {
-            exitCode = run(args);
-        } catch (Exception exception) {
-            System.err.println("analyzer error: " + exception.getMessage());
-            exitCode = 4;
+            worker.join();
+        } catch (InterruptedException exception) {
+            exitCode[0] = 4;
         }
-        if (exitCode != 0) {
-            System.exit(exitCode);
+        if (exitCode[0] != 0) {
+            System.exit(exitCode[0]);
         }
     }
 
     private static int run(String[] args) throws IOException {
-        if (args.length != 6 || !"--source".equals(args[0]) ||
-                !"--analysis".equals(args[2]) || !"--classes".equals(args[4])) {
+        Path sourcePath = null;
+        Path analysisPath = null;
+        Path classesPath = null;
+        boolean parseOnly = false;
+        for (int i = 0; i < args.length; i++) {
+            if ("--parse-only".equals(args[i])) {
+                parseOnly = true;
+            } else if (i + 1 < args.length && "--source".equals(args[i])) {
+                sourcePath = Paths.get(args[++i]);
+            } else if (i + 1 < args.length && "--analysis".equals(args[i])) {
+                analysisPath = Paths.get(args[++i]);
+            } else if (i + 1 < args.length && "--classes".equals(args[i])) {
+                classesPath = Paths.get(args[++i]);
+            } else {
+                sourcePath = null;
+                break;
+            }
+        }
+        if (sourcePath == null || analysisPath == null || (classesPath == null && !parseOnly)) {
             System.err.println(
-                    "usage: Analyzer --source <file> --analysis <file> --classes <directory>");
+                    "usage: Analyzer --source <file> --analysis <file> (--classes <directory> | --parse-only)");
             return 3;
         }
-        Path sourcePath = Paths.get(args[1]);
-        Path analysisPath = Paths.get(args[3]);
-        Path classesPath = Paths.get(args[5]);
         String source = Files.readString(sourcePath, StandardCharsets.UTF_8);
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -84,30 +109,47 @@ public final class Analyzer {
         }
 
         long started = System.nanoTime();
-        Analysis analysis = parse(compiler, source);
-        Files.createDirectories(classesPath);
-        DiagnosticCollector<JavaFileObject> compileDiagnostics = new DiagnosticCollector<>();
-        boolean compiled = compile(compiler, source, analysis.publicTypeName,
-                                  classesPath, compileDiagnostics);
+        DiagnosticCollector<JavaFileObject> parseDiagnostics = new DiagnosticCollector<>();
+        Analysis analysis = parse(compiler, source, parseDiagnostics);
         List<String> diagnostics = new ArrayList<>();
-        for (Diagnostic<? extends JavaFileObject> diagnostic : compileDiagnostics.getDiagnostics()) {
-            diagnostics.add(writeDiagnostic(diagnostic));
+        boolean hasCompileError;
+        boolean compiled = true;
+        AstBuilder.Result ast = null;
+        if (parseOnly) {
+            for (Diagnostic<? extends JavaFileObject> diagnostic : parseDiagnostics.getDiagnostics()) {
+                diagnostics.add(writeDiagnostic(diagnostic));
+            }
+            hasCompileError = parseDiagnostics.getDiagnostics().stream()
+                    .anyMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR);
+            ast = analysis.ast;
+        } else {
+            Files.createDirectories(classesPath);
+            DiagnosticCollector<JavaFileObject> compileDiagnostics = new DiagnosticCollector<>();
+            compiled = compile(compiler, source, analysis, classesPath, compileDiagnostics);
+            for (Diagnostic<? extends JavaFileObject> diagnostic : compileDiagnostics.getDiagnostics()) {
+                diagnostics.add(writeDiagnostic(diagnostic));
+            }
+            hasCompileError = compileDiagnostics.getDiagnostics().stream()
+                    .anyMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR);
+            ast = analysis.ast;
         }
-        boolean hasCompileError = compileDiagnostics.getDiagnostics().stream()
-                .anyMatch(diagnostic -> diagnostic.getKind() == Diagnostic.Kind.ERROR);
         if (!hasCompileError && analysis.mainClass == null) {
             diagnostics.add("{\"severity\":\"error\",\"code\":\"NO_MAIN_METHOD\","
                     + "\"message\":\"no public static void main(String[] args) method found\"}");
         }
+        if (ast != null && ast.truncated) {
+            diagnostics.add("{\"severity\":\"note\",\"code\":\"AST_TRUNCATED\","
+                    + "\"message\":\"AST truncated to " + AstBuilder.NODE_CAP + " nodes (breadth-first)\"}");
+        }
         double compileMs = (System.nanoTime() - started) / 1_000_000.0;
         String status = hasCompileError || !compiled ? "compile_error"
                 : analysis.mainClass == null ? "no_main" : "ok";
-        writeResult(analysisPath, analysis, diagnostics, compileMs, status);
+        writeResult(analysisPath, analysis, ast, diagnostics, compileMs, status);
         return 0;
     }
 
-    private static Analysis parse(JavaCompiler compiler, String source) throws IOException {
-        DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+    private static Analysis parse(JavaCompiler compiler, String source,
+                                  DiagnosticCollector<JavaFileObject> diagnostics) throws IOException {
         SourceFile sourceFile = new SourceFile("Submission.java", source);
         try (StandardJavaFileManager manager =
                      compiler.getStandardFileManager(diagnostics, null, StandardCharsets.UTF_8)) {
@@ -116,6 +158,8 @@ public final class Analyzer {
                     null, Collections.singletonList(sourceFile));
             Analysis analysis = new Analysis();
             for (CompilationUnitTree unit : task.parse()) {
+                analysis.unit = unit;
+                analysis.ast = buildAst(task, unit, source.length());
                 analysis.packageName =
                         unit.getPackageName() == null ? "" : unit.getPackageName().toString();
                 for (Tree declaration : unit.getTypeDecls()) {
@@ -166,10 +210,19 @@ public final class Analyzer {
         return false;
     }
 
-    private static boolean compile(JavaCompiler compiler, String source, String publicType,
+    private static AstBuilder.Result buildAst(JavacTask task, CompilationUnitTree unit, int length) {
+        try {
+            return AstBuilder.build(task, unit, length);
+        } catch (StackOverflowError error) {
+            return null;
+        }
+    }
+
+    private static boolean compile(JavaCompiler compiler, String source, Analysis analysis,
                                    Path classesPath,
                                    DiagnosticCollector<JavaFileObject> diagnostics)
             throws IOException {
+        String publicType = analysis.publicTypeName;
         String filename = publicType == null ? "Submission.java" : publicType + ".java";
         SourceFile sourceFile = new SourceFile(filename, source);
         try (StandardJavaFileManager manager =
@@ -180,8 +233,16 @@ public final class Analyzer {
                     null, manager, diagnostics, Arrays.asList("-proc:none", "-Xlint:all"),
                     null, Collections.singletonList(sourceFile));
             try {
-                task.parse();
+                Iterable<? extends CompilationUnitTree> units = task.parse();
                 task.analyze();
+                // Rebuild after attribution so synthetic members such as the implicit
+                // default constructor are present; generate() may desugar the trees.
+                for (CompilationUnitTree unit : units) {
+                    AstBuilder.Result rebuilt = buildAst(task, unit, source.length());
+                    if (rebuilt != null) {
+                        analysis.ast = rebuilt;
+                    }
+                }
                 task.generate();
             } catch (IOException exception) {
                 throw exception;
@@ -221,7 +282,8 @@ public final class Analyzer {
         return result.append('}').toString();
     }
 
-    private static void writeResult(Path path, Analysis analysis, List<String> diagnostics,
+    private static void writeResult(Path path, Analysis analysis, AstBuilder.Result ast,
+                                    List<String> diagnostics,
                                     double compileMs, String status) throws IOException {
         Files.createDirectories(path.getParent());
         Path temporary = path.resolveSibling(path.getFileName() + ".tmp");
@@ -237,8 +299,11 @@ public final class Analyzer {
                 .append(",\"packageName\":").append(packageName)
                 .append(",\"compileMs\":").append(compileMs)
                 .append(",\"staticAnalysis\":{\"schema\":\"gcd.static-analysis/1\",")
-                .append("\"language\":\"java\",\"ast\":null,\"nodeCount\":0,")
-                .append("\"truncated\":false,\"diagnostics\":[")
+                .append("\"language\":\"java\",\"ast\":")
+                .append(ast == null ? "null" : ast.json)
+                .append(",\"nodeCount\":").append(ast == null ? 0 : ast.nodeCount)
+                .append(",\"truncated\":").append(ast != null && ast.truncated)
+                .append(",\"diagnostics\":[")
                 .append(String.join(",", diagnostics))
                 .append("],\"java\":{\"mainClass\":").append(mainClass)
                 .append(",\"publicTypeName\":").append(publicType)
