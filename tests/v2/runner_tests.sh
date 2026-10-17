@@ -17,13 +17,17 @@ const { spawnSync } = require("node:child_process");
 const [runner, baseline, repo] = process.argv.slice(2);
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "gcd-runner-tests-"));
 
-function runCase(name, source, expectedExit, expectedCode = null) {
+function runCase(name, source, expectedExit, expectedCode = null, extraArgs = []) {
   const sourcePath = path.join(temporaryDirectory, `${name}.gcd`);
   const resultPath = path.join(temporaryDirectory, `${name}.json`);
   fs.writeFileSync(sourcePath, source);
-  const child = spawnSync(runner, ["--source", sourcePath, "--result", resultPath], {
+  const child = spawnSync(
+    runner,
+    ["--source", sourcePath, "--result", resultPath, ...extraArgs],
+    {
     encoding: "utf8",
-  });
+    },
+  );
   assert.equal(child.signal, null, `${name} terminated by ${child.signal}`);
   assert.equal(child.status, expectedExit, `${name}: ${child.stderr}`);
 
@@ -132,6 +136,133 @@ int main() {
     },
     { line: 2, column: 3, endLine: 2, endColumn: 14 },
   );
+
+  const tracePath = path.join(temporaryDirectory, "observed.ndjson");
+  const snapshotsDirectory = path.join(temporaryDirectory, "snapshots");
+  const observed = runCase(
+    "observed",
+    "a = new Object(); b = new Object(); c = new Object(); a.next = b; b = null; c = null; gc();",
+    0,
+    null,
+    [
+      "--trace",
+      tracePath,
+      "--trace-level",
+      "full",
+      "--batch-size",
+      "3",
+      "--snapshots-dir",
+      snapshotsDirectory,
+    ],
+  );
+  assert.equal(observed.engineResult.runtime.heap.observer, true);
+  assert.equal(observed.engineResult.snapshots.length, 2);
+  const snapshots = observed.engineResult.snapshots.map(({ index }) =>
+    JSON.parse(fs.readFileSync(path.join(snapshotsDirectory, `snapshot-${index}.json`), "utf8")),
+  );
+  assert.deepEqual(
+    snapshots.map(({ point }) => point),
+    ["mark_complete", "program_end"],
+  );
+  assert.equal(snapshots[0].objects.length, 3);
+  assert.equal(snapshots[0].objects.filter(({ marked }) => marked).length, 2);
+  assert.equal(snapshots[0].objects.filter(({ marked }) => !marked).length, 1);
+  assert.equal(snapshots[1].objects.length, 2);
+  for (const snapshot of snapshots) {
+    assert.equal(snapshot.schema, "gcd.heap-snapshot/1");
+    assert.equal(snapshot.runId, observed.runId);
+  }
+
+  const traceLines = fs.readFileSync(tracePath, "utf8").trim().split("\n");
+  const trailer = JSON.parse(traceLines.pop());
+  assert.equal(trailer.type, "end");
+  assert.equal(trailer.complete, true);
+  const batches = traceLines.map((line) => JSON.parse(line));
+  const interned = new Map();
+  const events = [];
+  let expectedSequence = 1;
+  batches.forEach((batch, batchIndex) => {
+    assert.equal(batch.schema, "gcd.trace-batch/1");
+    assert.equal(batch.runId, observed.runId);
+    assert.equal(batch.batch, batchIndex);
+    assert.equal(batch.firstSeq, expectedSequence);
+    for (const [id, value] of Object.entries(batch.strings)) interned.set(Number(id), value);
+    for (const event of batch.events) {
+      assert.equal(event[0], expectedSequence++);
+      events.push(event);
+    }
+    assert.equal(batch.lastSeq, expectedSequence - 1);
+  });
+  assert.equal(trailer.lastSeq, expectedSequence - 1);
+
+  const model = new Map();
+  const roots = new Map();
+  let freedAtCurrentGc = [];
+  for (const event of events) {
+    const [, kind] = event;
+    if (kind === "A") {
+      model.set(event[3], new Map());
+    } else if (kind === "RS") {
+      const name = interned.get(event[3]);
+      if (event[4] === null) roots.delete(name);
+      else roots.set(name, event[4]);
+    } else if (kind === "RC") {
+      roots.delete(interned.get(event[3]));
+    } else if (kind === "FW") {
+      const fields = model.get(event[4]);
+      assert.ok(fields, `write to unknown object ${event[4]}`);
+      fields.set(interned.get(event[3]), event[5]);
+    } else if (kind === "SF") {
+      freedAtCurrentGc.push(event[3]);
+    } else if (kind === "GE") {
+      const reachable = new Set();
+      const worklist = [...roots.values()];
+      while (worklist.length > 0) {
+        const handle = worklist.pop();
+        if (handle === null || reachable.has(handle) || !model.has(handle)) continue;
+        reachable.add(handle);
+        worklist.push(...model.get(handle).values());
+      }
+      const expectedFreed = [...model.keys()].filter((handle) => !reachable.has(handle)).sort();
+      assert.deepEqual(freedAtCurrentGc.sort(), expectedFreed);
+      for (const handle of expectedFreed) model.delete(handle);
+      freedAtCurrentGc = [];
+    }
+  }
+  assert.equal(observed.engineResult.collections[0].freed.value, 1);
+
+  const gcTracePath = path.join(temporaryDirectory, "gc-level.ndjson");
+  runCase("gc-level", "a = new Object(); gc();", 0, null, [
+    "--trace",
+    gcTracePath,
+    "--trace-level",
+    "gc",
+    "--batch-size",
+    "1",
+  ]);
+  const gcBatches = fs
+    .readFileSync(gcTracePath, "utf8")
+    .trim()
+    .split("\n")
+    .slice(0, -1)
+    .map((line) => JSON.parse(line));
+  const gcKinds = gcBatches.flatMap(({ events: batchEvents }) =>
+    batchEvents.map((event) => event[1]),
+  );
+  assert.ok(gcKinds.includes("GB"));
+  assert.ok(gcKinds.includes("GE"));
+  assert.ok(gcKinds.every((kind) => ["SB", "SE", "GB", "GE"].includes(kind)));
+
+  const errorTrace = path.join(temporaryDirectory, "error.ndjson");
+  runCase(
+    "traced-error",
+    "a = 5; a.f = null;",
+    2,
+    "RUNTIME_ERROR",
+    ["--trace", errorTrace, "--trace-level", "full"],
+  );
+  const errorTraceLines = fs.readFileSync(errorTrace, "utf8").trim().split("\n");
+  assert.equal(JSON.parse(errorTraceLines.at(-1)).type, "end");
 
   runCase("source-too-large", " ".repeat(65537), 2, "SOURCE_TOO_LARGE");
 
