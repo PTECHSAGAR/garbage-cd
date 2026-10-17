@@ -1,5 +1,7 @@
 #include "memory/heap.hpp"
 
+#include <chrono>
+
 namespace memory {
 
 gc::ObjectHandle Heap::allocate() {
@@ -35,13 +37,25 @@ gc::ObjectHandle Heap::getField(gc::ObjectHandle obj, const std::string& field) 
 }
 
 void Heap::collect() {
-    mark();
-    sweep();
+    CollectionRecord record;
+    record.gcIndex = stats_.totalCollections + 1;
+    const auto start = std::chrono::steady_clock::now();
+    mark(record);
+    sweep(record);
+    record.totalNs = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - start)
+            .count());
+    diagnostics_.collections.push_back(record);
     stats_.totalCollections++;
 }
 
 gc::GCStats Heap::getStats() const {
     return stats_;
+}
+
+const GcDiagnostics& Heap::diagnostics() const {
+    return diagnostics_;
 }
 
 Object* Heap::resolve(gc::ObjectHandle handle) const {

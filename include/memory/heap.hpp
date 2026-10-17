@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "gc_interface.hpp"
+#include "memory/diagnostics.hpp"
 #include "memory/object.hpp"
 
 namespace memory {
@@ -30,12 +31,13 @@ public:
     void collect() override;
 
     gc::GCStats getStats() const override;
+    const GcDiagnostics& diagnostics() const;
 
 private:
     // Mark-sweep phases. Implemented in mark.cpp / sweep.cpp respectively.
     // Not implemented yet -- currently no-ops.
-    void mark();
-    void sweep();
+    void mark(CollectionRecord& record);
+    void sweep(CollectionRecord& record);
 
     Object* resolve(gc::ObjectHandle handle) const;
 
@@ -43,6 +45,7 @@ private:
     std::vector<bool> slotInUse_;                     // true if the slot holds a live allocation
     std::unordered_map<std::string, gc::ObjectHandle> roots_;
     gc::GCStats stats_;
+    GcDiagnostics diagnostics_;
 };
 
 } // namespace memory
