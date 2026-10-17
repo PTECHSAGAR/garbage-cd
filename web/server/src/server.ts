@@ -2,7 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { createHash, randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, extname, join, relative } from "node:path";
 import { runProcess } from "./process.js";
 import { analyzeJavaSource, executeJava, type AdapterOutcome } from "./java-adapter.js";
 import { executeCustom } from "./custom-adapter.js";
@@ -344,6 +344,33 @@ async function loadSamples(root: string): Promise<Sample[]> {
   return samples;
 }
 
+const contentTypes: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon"
+};
+
+/** Maps URL paths to files by walking the build directory once; requests never build file paths. */
+async function indexClientFiles(directory: string): Promise<Map<string, string>> {
+  const files = new Map<string, string>();
+  if (!existsSync(directory)) return files;
+  const walk = async (current: string): Promise<void> => {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) files.set(`/${relative(directory, full).split("\\").join("/")}`, full);
+    }
+  };
+  await walk(directory);
+  return files;
+}
+
 async function probeJdk(config: Config): Promise<void> {
   const javaHome = dirname(dirname(config.javaPath));
   const env = {
@@ -369,6 +396,13 @@ async function probeJdk(config: Config): Promise<void> {
 
 export async function createServer(config: Config = defaultConfig): Promise<FastifyInstance> {
   await sweepRunRoot(config);
+  try {
+    await probeJdk(config);
+    process.env.GCD_JDK_VERSION = config.jdkVersion;
+    process.env.GCD_JDK_VENDOR = config.jdkVendor;
+  } catch {
+    // The health route reports a missing JDK; runs fail with ENGINE_UNAVAILABLE-style errors.
+  }
   const validator = await ContractValidator.load(config);
   const samples = await loadSamples(config.root);
   const runs = new Map<string, StoredRun>();
@@ -562,6 +596,18 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
     if (run.result.status !== "running") return reply.code(409).send({ error: "Run is already finished" });
     run.abort.abort();
     return reply.code(202).send({ runId: request.params.id, status: "cancelling" });
+  });
+
+  const clientFiles = await indexClientFiles(config.clientDist);
+  app.get("/*", async (request, reply) => {
+    const pathname = request.url.split("?")[0] ?? "/";
+    const file = clientFiles.get(pathname === "/" ? "/index.html" : pathname);
+    if (!file) return reply.code(404).send({ error: "Not found" });
+    return reply
+      .header("content-type", contentTypes[extname(file)] ?? "application/octet-stream")
+      .header("x-content-type-options", "nosniff")
+      .header("cache-control", pathname.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache")
+      .send(await readFile(file));
   });
 
   app.get("/api/benchmarks", async () => []);

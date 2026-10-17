@@ -182,7 +182,7 @@ describe("controller behaviour", () => {
     }
     const leftover = (() => {
       try {
-        return execSync("pgrep -f 'gcd-java-tools|gcd_runner' || true", { encoding: "utf8" }).trim();
+        return execSync(`pgrep -f ${JSON.stringify(config.runRoot)} || true`, { encoding: "utf8" }).trim();
       } catch {
         return "";
       }
