@@ -12,6 +12,7 @@
 
 #include "gc_interface.hpp"
 #include "memory/diagnostics.hpp"
+#include "memory/observer.hpp"
 #include "memory/object.hpp"
 
 namespace memory {
@@ -32,12 +33,19 @@ public:
 
     gc::GCStats getStats() const override;
     const GcDiagnostics& diagnostics() const;
+    void setObserver(GcObserver* observer);
+    void setCurrentStatement(std::uint32_t statementIndex);
+    HeapView view() const;
+    void verifyInvariants() const;
 
 private:
     // Mark-sweep phases. Implemented in mark.cpp / sweep.cpp respectively.
     // Not implemented yet -- currently no-ops.
     void mark(CollectionRecord& record);
+    template <bool RecordParents>
+    void markImpl(CollectionRecord& record);
     void sweep(CollectionRecord& record);
+    HeapView makeView() const;
 
     Object* resolve(gc::ObjectHandle handle) const;
 
@@ -46,6 +54,8 @@ private:
     std::unordered_map<std::string, gc::ObjectHandle> roots_;
     gc::GCStats stats_;
     GcDiagnostics diagnostics_;
+    GcObserver* observer_ = nullptr;
+    std::uint32_t currentStatement_ = 0;
 };
 
 } // namespace memory

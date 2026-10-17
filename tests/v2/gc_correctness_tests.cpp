@@ -271,6 +271,7 @@ void testInvalidAndStaleHandlesDoNotCrash() {
 
     const auto survivor = allocateTracked(heap);
     heap.setRoot("survivor", survivor);
+    heap.setRoot("stale", freed);
     heap.setField(invalid, "ignored", survivor);
     heap.setField(neverAllocated, "ignored", survivor);
     heap.setField(freed, "ignored", survivor);

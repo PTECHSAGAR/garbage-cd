@@ -19,6 +19,9 @@ void Heap::sweep(CollectionRecord& record) {
             objects_[i]->marked = false;
             ++live;
         } else {
+            if (observer_) {
+                observer_->onSweepFree(gc::ObjectHandle(i));
+            }
             const std::uint64_t fieldCount = objects_[i]->fields().size();
             record.fieldNodesFreed += fieldCount;
             diagnostics_.currentFieldNodes -= fieldCount;

@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "gc_interface.hpp"
+#include "memory/observer.hpp"
 
 namespace memory {
 
@@ -21,6 +22,9 @@ public:
 
     // Mark-sweep bookkeeping bit. Managed entirely by mark.cpp / sweep.cpp.
     bool marked = false;
+    std::uint64_t allocSeq = 0;
+    std::uint32_t allocStatement = 0;
+    std::optional<MarkDiscovery> discoveredBy;
 
 private:
     std::unordered_map<std::string, gc::ObjectHandle> fields_;
