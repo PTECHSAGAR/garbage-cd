@@ -531,7 +531,7 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
       const sourceSha256 = createHash("sha256").update(runRequest.source, "utf8").digest("hex");
       entry.result.sourceSha256 = sourceSha256;
     } catch (error) {
-      activeRunId = undefined;
+      if (activeRunId === runId) activeRunId = undefined;
       runs.delete(runId);
       request.log.error({ error }, "Unable to create run directory");
       return reply.code(500).send({ error: structuredError("INTERNAL", "controller", String(error)) });
@@ -556,6 +556,9 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
             structuredError("SCHEMA_VIOLATION", "controller", validationErrors.join("; "))
           ];
         }
+        // Release the slot in the same tick the terminal status becomes visible, so a client
+        // that sees the status can immediately start the next run.
+        if (activeRunId === runId) activeRunId = undefined;
         entry.result = result;
         const resultPath = join(runDir, "run-result.json");
         const temporary = `${resultPath}.tmp`;
@@ -563,6 +566,7 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
         await rename(temporary, resultPath);
       } catch (error) {
         request.log.error({ runId, error }, "Run failed unexpectedly");
+        if (activeRunId === runId) activeRunId = undefined;
         entry.result = {
           ...entry.result,
           startedAt,
@@ -578,7 +582,7 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
           engineResult: runRequest.engine === "jvm" ? emptyJvmResult(config) : emptyCustomResult(config)
         };
       } finally {
-        activeRunId = undefined;
+        if (activeRunId === runId) activeRunId = undefined;
         await pruneRunRoot(config, runs);
       }
     })();
