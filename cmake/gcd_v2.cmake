@@ -78,7 +78,8 @@ if(TARGET gcd_runner AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tes
     endif()
     add_test(
         NAME runner_tests
-        COMMAND ${CMAKE_COMMAND} -E env "NODE=${GCD_NODE_EXECUTABLE}"
+        COMMAND ${CMAKE_COMMAND} -E env
+                "NODE=${GCD_NODE_EXECUTABLE}" "CXX=${CMAKE_CXX_COMPILER}"
                 bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tests.sh"
                 "$<TARGET_FILE:gcd_runner>" "$<TARGET_FILE:garbage_cd>")
 endif()

@@ -45,6 +45,36 @@ function runCase(name, source, expectedExit, expectedCode = null) {
 }
 
 try {
+  const writerSource = String.raw`
+#include <iostream>
+#include <string>
+#include "json_writer.hpp"
+int main() {
+  JsonWriter writer;
+  writer.beginObject();
+  writer.key("value");
+  writer.string(std::string(R"(quote " slash \ control )") + char(1) +
+                " snowman \xE2\x98\x83 invalid " + char(0xf0));
+  writer.endObject();
+  std::cout << writer.str();
+}
+`;
+  const writerExecutable = path.join(temporaryDirectory, "json-writer-test");
+  const compiler = spawnSync(
+    process.env.CXX || "c++",
+    ["-std=c++17", "-I", path.join(repo, "tools/gcd_runner"), "-x", "c++", "-", "-o", writerExecutable],
+    { input: writerSource, encoding: "utf8" },
+  );
+  assert.equal(compiler.status, 0, compiler.stderr);
+  const writerOutput = spawnSync(writerExecutable, [], { encoding: "utf8" });
+  assert.equal(writerOutput.status, 0, writerOutput.stderr);
+  const escapedValue = JSON.parse(writerOutput.stdout).value;
+  assert.ok(escapedValue.includes("☃"));
+  assert.ok(escapedValue.includes('quote " slash \\ control'));
+  assert.ok(escapedValue.includes("\u0001"));
+  assert.ok(escapedValue.includes("\u00f0"));
+  assert.ok(writerOutput.stdout.includes("\\u00f0"));
+
   const sampleSource = fs.readFileSync(path.join(repo, "examples/sample_program.txt"), "utf8");
   const sample = runCase("sample", sampleSource, 0);
   const baselineOutput = spawnSync(
