@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -176,6 +177,11 @@ struct Arguments {
     std::string sourcePath;
     std::string resultPath;
     std::string runId;
+    std::string tracePath;
+    TraceLevel traceLevel = TraceLevel::Off;
+    std::size_t batchSize = 1024;
+    std::string snapshotsDirectory;
+    std::size_t snapshotMaxObjects = 2000;
 };
 
 struct RunData {
@@ -197,9 +203,11 @@ struct RunData {
     double wallTimeMs = 0;
     std::uint64_t statementsExecuted = 0;
     std::uint64_t estimatedLiveFieldNodes = 0;
+    bool observerEnabled = false;
     gc::GCStats stats;
     std::vector<memory::CollectionRecord> collections;
     std::vector<std::uint64_t> collectionStatementIndices;
+    std::vector<SnapshotRecord> snapshots;
     std::vector<RunnerError> errors;
 };
 
@@ -357,24 +365,74 @@ bool readSource(const std::string& path, std::string& source, std::string& diges
 
 std::optional<Arguments> parseArguments(int argc, char** argv) {
     Arguments arguments;
+    const auto parseSize = [](const std::string& value, std::size_t maximum,
+                              std::size_t& parsed) {
+        if (value.empty()) {
+            return false;
+        }
+        std::size_t result = 0;
+        for (const char character : value) {
+            if (character < '0' || character > '9') {
+                return false;
+            }
+            const std::size_t digit = static_cast<std::size_t>(character - '0');
+            if (result > (maximum - digit) / 10) {
+                return false;
+            }
+            result = result * 10 + digit;
+        }
+        parsed = result;
+        return true;
+    };
+
     for (int i = 1; i < argc; ++i) {
         const std::string flag = argv[i];
-        if ((flag == "--source" || flag == "--result" || flag == "--run-id") &&
-            i + 1 < argc) {
+        if (i + 1 < argc &&
+            (flag == "--source" || flag == "--result" || flag == "--run-id" ||
+             flag == "--trace" || flag == "--trace-level" || flag == "--batch-size" ||
+             flag == "--snapshots-dir" || flag == "--snapshot-max-objects")) {
             const std::string value = argv[++i];
             if (flag == "--source") {
                 arguments.sourcePath = value;
             } else if (flag == "--result") {
                 arguments.resultPath = value;
-            } else {
+            } else if (flag == "--run-id") {
                 arguments.runId = value;
+            } else if (flag == "--trace") {
+                arguments.tracePath = value;
+            } else if (flag == "--trace-level") {
+                if (value == "off") {
+                    arguments.traceLevel = TraceLevel::Off;
+                } else if (value == "gc") {
+                    arguments.traceLevel = TraceLevel::Gc;
+                } else if (value == "mutator") {
+                    arguments.traceLevel = TraceLevel::Mutator;
+                } else if (value == "full") {
+                    arguments.traceLevel = TraceLevel::Full;
+                } else {
+                    return std::nullopt;
+                }
+            } else if (flag == "--batch-size") {
+                if (!parseSize(value, 8192, arguments.batchSize) ||
+                    arguments.batchSize == 0) {
+                    return std::nullopt;
+                }
+            } else if (flag == "--snapshots-dir") {
+                arguments.snapshotsDirectory = value;
+            } else if (flag == "--snapshot-max-objects") {
+                if (!parseSize(value, 2000, arguments.snapshotMaxObjects) ||
+                    arguments.snapshotMaxObjects == 0) {
+                    return std::nullopt;
+                }
             }
         } else {
             return std::nullopt;
         }
     }
     if (arguments.sourcePath.empty() || arguments.resultPath.empty() ||
-        (!arguments.runId.empty() && !isValidUlid(arguments.runId))) {
+        (!arguments.runId.empty() && !isValidUlid(arguments.runId)) ||
+        (arguments.tracePath.empty() && arguments.traceLevel != TraceLevel::Off) ||
+        (arguments.snapshotsDirectory.empty() && arguments.snapshotMaxObjects != 2000)) {
         return std::nullopt;
     }
     return arguments;
@@ -576,7 +634,7 @@ std::string serializeResult(const RunData& run) {
     writer.key("slotReuse");
     writer.boolean(false);
     writer.key("observer");
-    writer.boolean(false);
+    writer.boolean(run.observerEnabled);
     writer.endObject();
     writer.endObject();
 
@@ -664,6 +722,24 @@ std::string serializeResult(const RunData& run) {
     writer.endArray();
     writer.key("snapshots");
     writer.beginArray();
+    for (const SnapshotRecord& snapshot : run.snapshots) {
+        writer.beginObject();
+        writer.key("index");
+        writer.number(snapshot.index);
+        writer.key("gcIndex");
+        if (snapshot.gcIndex) {
+            writer.number(*snapshot.gcIndex);
+        } else {
+            writer.nullValue();
+        }
+        writer.key("point");
+        writer.string(snapshot.point);
+        writer.key("objectCount");
+        writer.number(snapshot.objectCount);
+        writer.key("truncated");
+        writer.boolean(snapshot.truncated);
+        writer.endObject();
+    }
     writer.endArray();
     writer.endObject();
 
@@ -728,12 +804,62 @@ int runProgram(const Arguments& arguments) {
     run.createdAt = timestamp();
     run.startedAt = run.createdAt;
     const auto wallStart = std::chrono::steady_clock::now();
+    std::unique_ptr<FileSink> traceSink;
+    std::unique_ptr<EventBuffer> eventBuffer;
+    std::unique_ptr<SnapshotWriter> snapshotWriter;
+    std::unique_ptr<RunnerObserver> observer;
+    if (!arguments.tracePath.empty()) {
+        traceSink = std::make_unique<FileSink>(arguments.tracePath);
+        eventBuffer = std::make_unique<EventBuffer>(
+            *traceSink, run.runId, arguments.batchSize, arguments.traceLevel);
+    }
+    if (!arguments.snapshotsDirectory.empty()) {
+        snapshotWriter = std::make_unique<SnapshotWriter>(
+            arguments.snapshotsDirectory, run.runId, arguments.snapshotMaxObjects);
+    }
+    const auto finishOutputs = [&]() {
+        if (eventBuffer) {
+            eventBuffer->finish();
+            if (!eventBuffer->error().empty()) {
+                run.errors.push_back(
+                    RunnerError{"TRACE_IO", "controller", eventBuffer->error(), std::nullopt});
+                run.status = "internal_error";
+            }
+        }
+        if (snapshotWriter && !snapshotWriter->error().empty()) {
+            run.errors.push_back(RunnerError{"SNAPSHOT_IO", "controller",
+                                             snapshotWriter->error(), std::nullopt});
+            run.status = "internal_error";
+        }
+        if (observer && !observer->error().empty() &&
+            (!snapshotWriter || snapshotWriter->error().empty())) {
+            run.errors.push_back(
+                RunnerError{"SNAPSHOT_IO", "controller", observer->error(), std::nullopt});
+            run.status = "internal_error";
+        }
+    };
+    const auto finishAndWrite = [&](int exitCode) {
+        finishOutputs();
+        if (snapshotWriter) {
+            run.snapshots = snapshotWriter->records();
+        }
+        if (run.status == "internal_error") {
+            return writeAndExit(arguments, run, 4);
+        }
+        return writeAndExit(arguments, run, exitCode);
+    };
 
     std::string source;
     std::string readError;
     bool tooLarge = false;
     if (!readSource(arguments.sourcePath, source, run.sourceSha256, tooLarge, readError)) {
         std::cerr << readError << ": " << arguments.sourcePath << '\n';
+        if (eventBuffer) {
+            eventBuffer->finish();
+            if (!eventBuffer->error().empty()) {
+                std::cerr << eventBuffer->error() << '\n';
+            }
+        }
         return 3;
     }
 
@@ -747,7 +873,7 @@ int runProgram(const Arguments& arguments) {
         run.wallTimeMs = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - wallStart)
                              .count();
-        return writeAndExit(arguments, run, 2);
+        return finishAndWrite(2);
     }
 
     interpreter::Program program;
@@ -767,7 +893,7 @@ int runProgram(const Arguments& arguments) {
         run.wallTimeMs = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - wallStart)
                              .count();
-        return writeAndExit(arguments, run, 2);
+        return finishAndWrite(2);
     }
     run.analysisMs = std::chrono::duration<double, std::milli>(
                          std::chrono::steady_clock::now() - analysisStart)
@@ -787,11 +913,21 @@ int runProgram(const Arguments& arguments) {
         run.wallTimeMs = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - wallStart)
                              .count();
-        return writeAndExit(arguments, run, 4);
+        return finishAndWrite(4);
     }
 
     memory::Heap heap;
-    TracingHeap tracingHeap(heap);
+    EventBuffer* activeEvents =
+        eventBuffer && arguments.traceLevel != TraceLevel::Off ? eventBuffer.get() : nullptr;
+    run.observerEnabled = activeEvents != nullptr || snapshotWriter != nullptr;
+    if (run.observerEnabled) {
+        const bool recordMarkForest =
+            snapshotWriter != nullptr || arguments.traceLevel == TraceLevel::Full;
+        observer = std::make_unique<RunnerObserver>(
+            activeEvents, snapshotWriter.get(), recordMarkForest);
+        heap.setObserver(observer.get());
+    }
+    TracingHeap tracingHeap(heap, activeEvents);
     interpreter::Interpreter interpreter(tracingHeap);
     BoundedStringBuf stdoutBuffer(kMaxStdoutBytes);
     const auto executeStart = std::chrono::steady_clock::now();
@@ -800,6 +936,10 @@ int runProgram(const Arguments& arguments) {
         for (std::size_t i = 0; i < program.statements.size(); ++i) {
             interpreter::Program singleStatement;
             singleStatement.statements.push_back(program.statements[i]);
+            tracingHeap.beginStatement(static_cast<std::uint32_t>(i));
+            if (observer) {
+                observer->setCurrentStatement(static_cast<std::uint32_t>(i));
+            }
             try {
                 interpreter.run(singleStatement);
                 ++run.statementsExecuted;
@@ -816,8 +956,10 @@ int runProgram(const Arguments& arguments) {
                     location = spans.at(i);
                 }
                 run.errors.push_back(classifyRunnerError(exception.what(), "execute", location));
+                tracingHeap.endStatement(static_cast<std::uint32_t>(i));
                 break;
             }
+            tracingHeap.endStatement(static_cast<std::uint32_t>(i));
         }
     }
     run.stdout = stdoutBuffer.value();
@@ -827,6 +969,12 @@ int runProgram(const Arguments& arguments) {
                         .count();
     run.stats = tracingHeap.getStats();
     run.estimatedLiveFieldNodes = tracingHeap.diagnostics().currentFieldNodes;
+    if (snapshotWriter) {
+        const auto endSnapshot =
+            snapshotWriter->write("program_end", heap.view(), std::nullopt,
+                                  static_cast<std::uint32_t>(run.statementsExecuted));
+        (void)endSnapshot;
+    }
     if (!run.executionFailed) {
         run.status = "succeeded";
     }
@@ -834,7 +982,7 @@ int runProgram(const Arguments& arguments) {
     run.wallTimeMs = std::chrono::duration<double, std::milli>(
                          std::chrono::steady_clock::now() - wallStart)
                          .count();
-    return writeAndExit(arguments, run, run.executionFailed ? 2 : 0);
+    return finishAndWrite(run.executionFailed ? 2 : 0);
 }
 
 } // namespace

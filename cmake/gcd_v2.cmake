@@ -43,7 +43,21 @@ gcd_v2_add_executable(gc_correctness_tests tests/v2/gc_correctness_tests.cpp)
 gcd_v2_add_executable(gc_property_tests tests/v2/gc_property_tests.cpp)
 gcd_v2_add_executable(diagnostics_tests tests/v2/diagnostics_tests.cpp)
 gcd_v2_add_executable(
+    event_buffer_tests tests/v2/event_buffer_tests.cpp
+    tools/gcd_runner/event_buffer.cpp)
+if(TARGET event_buffer_tests)
+    target_include_directories(event_buffer_tests PRIVATE tools/gcd_runner)
+endif()
+gcd_v2_add_executable(
+    snapshot_tests tests/v2/snapshot_tests.cpp
+    tools/gcd_runner/snapshot_writer.cpp)
+if(TARGET snapshot_tests)
+    target_include_directories(snapshot_tests PRIVATE tools/gcd_runner)
+endif()
+gcd_v2_add_executable(
     gcd_runner tools/gcd_runner/main.cpp
+    tools/gcd_runner/event_buffer.cpp
+    tools/gcd_runner/snapshot_writer.cpp
     tools/gcd_runner/tracing_heap.cpp
     tools/gcd_runner/spans.cpp
     tools/gcd_runner/toy_ast_json.cpp)
@@ -62,7 +76,8 @@ if(TARGET gcd_runner)
     target_compile_definitions(gcd_runner PRIVATE GCD_GIT_COMMIT="${GCD_GIT_COMMIT}")
 endif()
 
-foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_tests)
+foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_tests
+                            event_buffer_tests snapshot_tests)
     if(TARGET ${test_target})
         add_test(NAME ${test_target} COMMAND ${test_target})
     endif()
