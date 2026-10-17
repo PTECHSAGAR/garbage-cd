@@ -41,3 +41,61 @@
 - Deviations: added internal field-node diagnostics solely to implement the D.7 estimated-byte formula. It is not added to the JSON contract and does not affect collector decisions. Canary abort handling uses a wrapper because CTest `WILL_FAIL` does not invert signal exits.
 - Open issues: only the Node 25 Homebrew dylib issue noted above; no code or acceptance blockers.
 - Proposed T2 risks: preserve the observer-off baseline mark path with compile-time specialization; validate each mark-forest edge against a real root/field edge; verify observer/region instrumentation does not alter freed-object sets; test event sequence/batch overflow boundaries.
+
+## T2 brief — observer, snapshots, events, invariants
+
+### Source sections
+
+I.3 items 3–7; D.8–D.9; E.4; E.7; G.1 rows 14, 16, and 17. This brief follows those sections without changing their design.
+
+### May create or modify
+
+- M-owned `include/memory/**` and `src/memory/**`, including `observer.hpp`, read-only `HeapView`, object allocation/statement metadata, mark-forest metadata, observer hooks, and `Heap::verifyInvariants()`.
+- `cmake/gcd_v2.cmake`, `tools/gcd_runner/**`, `tests/v2/**`, `contracts/schemas/**`, `contracts/examples/**`, and this progress log.
+
+### Must not modify
+
+- `include/gc_interface.hpp`; anything under `include/interpreter/`, `src/interpreter/`, `include/runtime/`, or `src/runtime/`; `src/main.cpp`; `tests/gc_tests.cpp`; `tests/interpreter_tests.cpp`; root `CMakeLists.txt`; or any V1 behavior.
+
+### Ordered steps
+
+1. Add observer interface and read-only heap view; add `allocSeq`, `allocStatement`, and `discoveredBy` storage; add the memory-owned current-statement setter and call it from the runner before each statement.
+2. Template marking on whether parent recording is enabled; keep the no-observer mark path free of parent-recording work; implement collection begin/visit/mark-complete/sweep-free/end callbacks.
+3. Implement I1–I5 and I7 invariant verification and call it in tests and Debug builds after collection.
+4. Implement bounded breadth-first heap snapshots, including roots and at most 2,000 objects, and serialize the D.8 contract.
+5. Implement D.9 event records, `EventBuffer`, `FileSink`, and `MemorySink`; support trace levels, batch sizes 1–8,192, flush boundaries, output caps, structural-event retention, drop accounting, and the end trailer.
+6. Add the heap-snapshot and trace-batch Draft 2020-12 schemas and runner-generated examples; extend tests for the spanning forest, event boundaries/overflow, and event replay against a model heap.
+7. Run freed-set differential and seeded property checks; run Debug, Release, and ASan/UBSan gates; update the log and commit locally.
+
+### Commands
+
+- `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j && ctest --test-dir build --output-on-failure`
+- `cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=Release && cmake --build build-rel -j && ctest --test-dir build-rel --output-on-failure`
+- `cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DGCD_SANITIZE=ON && cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure`
+- `GCD_PROPERTY_SEEDS=10000 ./build/gc_property_tests`
+- Validate generated snapshot and trace examples against their schemas with Node 22 and Ajv.
+
+### Acceptance
+
+- Observer callbacks and snapshots are correct; the spanning forest is rooted in actual heap edges; `verifyInvariants()` checks I1–I5 and I7.
+- Snapshot truncation preserves roots and a breadth-first slice and is set above 2,000 objects.
+- Event sequences are contiguous across batches; batch boundaries work for B = 1, 3, and 1,024; overflow retains structural events and accounts for drops; normal and caught-error paths flush a trailer.
+- Replaying mutator events reproduces each collection's freed set; enabling observation does not change freed-object sets.
+- All C++ Debug, Release, and ASan/UBSan gates pass; no frozen file or shared interface changes.
+
+### Stop conditions
+
+- Stop if a change would touch a must-not-modify file, alter reclamation behavior, require changing a frozen L.1 decision, or if a collector test fails on unchanged collector behavior.
+- Stop after three consecutive failures of the same gate; do not weaken or skip tests.
+
+## T2 completion — observer, snapshots, events, invariants
+
+- Steps 1–3: added `GcObserver`, immutable heap views, allocation/statement/discovery metadata, observer-selectable parent recording, mark/sweep callbacks, and `Heap::verifyInvariants()` for I1–I5 and I7. Diagnostics tests validate real spanning-forest edges and prove observed/unobserved collection frees the same handles.
+- Step 4: added D.8 snapshot serialization and atomic file publication. Snapshots retain all roots, prioritize a breadth-first slice, cap objects at 2,000, record mark-complete discovery metadata, and write program-end snapshots with `marked: null`.
+- Steps 5–6: added D.9 NDJSON batching, interned names, `FileSink`/`MemorySink`, trace-level and batch-size CLI options, 1,000,000-event/64-MiB bounds, structural-event retention, drop accounting, and trailers. Added the snapshot/trace schemas and examples generated by `gcd_runner`.
+- Step 7 acceptance: Debug, Release, and ASan/UBSan builds and full CTest each passed (9/9); `GCD_PROPERTY_SEEDS=10000 ./build/gc_property_tests` passed; both new examples validated with Node 22/Ajv. Runner acceptance replays full mutator traces against a model heap and matches each GC's freed set; batch sizes 1, 3, and 1,024, overflow, trace levels, caught-error trailers, snapshot truncation, and discovery paths are covered.
+- The first ASan run exposed a stack-use-after-scope in the new test helper (iteration over a view returned from a temporary). The helper now owns the `HeapView`; the targeted sanitizer test and complete sanitizer gate then passed.
+- Plan deviation: `Heap::setRoot` normalizes invalid or stale handles to `invalid()` so I1 can be verified. Existing marking already ignored unresolvable roots; the observed-vs-unobserved freed-handle test and 10,000-seed oracle show no change to reclaimed sets.
+- Frozen V1 interpreter/runtime sources, `gc_interface.hpp`, `src/main.cpp`, and `tests/gc_tests.cpp` remain unchanged. No outstanding T2 blockers.
+- T2 files: `cmake/gcd_v2.cmake`; `contracts/{schemas,examples}/{heap-snapshot,trace-batch}*`; `include/memory/{observer,heap,object}.hpp`; `src/memory/{heap,mark,sweep}.cpp`; `tests/v2/{diagnostics_tests,event_buffer_tests,snapshot_tests,runner_tests.sh}`; `tools/gcd_runner/{event_buffer,snapshot_writer}.{hpp,cpp}` and `main.cpp`, `tracing_heap.{hpp,cpp}`; this log.
+- Commit series: `841be50` observer/invariants; `1949ce1` snapshots; `34e29df` trace buffering and runner wiring; `f7b0993` contracts/replay gates. The final completion-log commit follows.
