@@ -21,7 +21,10 @@
 
 ### T1 status
 
-- Steps A–E: not started.
-- Commands: baseline Debug build/test passed; baseline ASan+UBSan build/test/sample passed; B.7 probes passed functionally.
-- Acceptance: pending T1 implementation and its required Debug, Release, ASan, property-test, runner, and schema gates.
+- Step A — complete; commit `69773b1`. Added the V2 CMake hook, conditional V2 test/runner target registration, always-on CHECK macros, and the expected-failure canary. The canary's `abort()` was translated by its CTest wrapper to a conventional nonzero exit because CTest does not invert a signal termination with `WILL_FAIL`. Debug and Release CTest passed; Release `gc_tests` flags place `-UNDEBUG` after `-DNDEBUG`.
+- Step B — complete and committed next. Added G.1 rows 1–11 and the independent BFS property oracle. Debug CTest passed (5/5), and `GCD_PROPERTY_SEEDS=10000 ./build/gc_property_tests` passed. The collector sources were not modified.
+- Steps C–E: not started.
+- Step B files: `cmake/gcd_v2.cmake`, `tests/v2/gc_correctness_tests.cpp`, `tests/v2/gc_property_tests.cpp`; staged change stat before this log update was 463 insertions across 3 files.
+- Commands: baseline Debug build/test passed; baseline ASan+UBSan build/test/sample passed; B.7 probes passed functionally; Step A Debug and Release CTest passed; Step B Debug CTest and 10,000-seed property test passed.
+- Acceptance: pending diagnostics, runner, schemas, and final Debug/Release/ASan and runner gates.
 - Open issues: none beyond the noted baseline discrepancies.

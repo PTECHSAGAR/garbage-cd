@@ -44,6 +44,12 @@ gcd_v2_add_executable(gc_property_tests tests/v2/gc_property_tests.cpp)
 gcd_v2_add_executable(diagnostics_tests tests/v2/diagnostics_tests.cpp)
 gcd_v2_add_executable(gcd_runner tools/gcd_runner/main.cpp)
 
+foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_tests)
+    if(TARGET ${test_target})
+        add_test(NAME ${test_target} COMMAND ${test_target})
+    endif()
+endforeach()
+
 if(TARGET gcd_runner AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/v2/runner_tests.sh")
     add_test(
         NAME runner_tests
