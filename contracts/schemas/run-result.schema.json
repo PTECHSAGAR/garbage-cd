@@ -12,8 +12,8 @@
   "properties": {
     "schema": { "const": "gcd.run-result/1" },
     "runId": { "type": "string", "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
-    "engine": { "const": "custom" },
-    "language": { "const": "gcd-toy" },
+    "engine": { "enum": ["jvm", "custom"] },
+    "language": { "enum": ["java", "gcd-toy"] },
     "sourceSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "createdAt": { "$ref": "#/$defs/timestamp" },
     "startedAt": { "$ref": "#/$defs/timestamp" },
@@ -31,6 +31,7 @@
       "required": ["analysis", "execute"],
       "properties": {
         "analysis": { "$ref": "#/$defs/phase" },
+        "compile": { "$ref": "#/$defs/phase" },
         "execute": { "$ref": "#/$defs/phase" }
       }
     },
@@ -50,7 +51,12 @@
       "items": { "$ref": "structured-error.schema.json" }
     },
     "staticAnalysis": { "$ref": "static-analysis.schema.json" },
-    "engineResult": { "$ref": "custom-engine-result.schema.json" },
+    "engineResult": {
+      "oneOf": [
+        { "$ref": "custom-engine-result.schema.json" },
+        { "$ref": "jvm-engine-result.schema.json" }
+      ]
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -58,16 +64,25 @@
       "properties": {
         "sourceBytes": { "type": "integer", "minimum": 0 },
         "stdoutBytes": { "type": "integer", "minimum": 0 },
-        "prlimit": { "type": "string", "enum": ["applied", "unsupported-platform"] }
+        "prlimit": { "type": "string", "enum": ["applied", "unsupported-platform"] },
+        "analysisTimeoutMs": { "type": "integer", "minimum": 0 },
+        "executionTimeoutMs": { "type": "integer", "minimum": 0 },
+        "cpuSeconds": { "type": "integer", "minimum": 0 },
+        "heapMiB": { "type": "integer", "minimum": 0 },
+        "fileBytes": { "type": "integer", "minimum": 0 },
+        "openFiles": { "type": "integer", "minimum": 0 },
+        "addressSpaceBytes": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "toolVersions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["controller", "runner", "gitCommit"],
+      "required": ["controller", "gitCommit"],
       "properties": {
         "controller": { "type": "string" },
         "runner": { "type": "string" },
+        "analyzer": { "type": "string" },
+        "jdk": { "type": "string" },
         "gitCommit": { "type": "string" }
       }
     },

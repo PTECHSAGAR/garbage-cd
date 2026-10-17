@@ -99,3 +99,70 @@ I.3 items 3–7; D.8–D.9; E.4; E.7; G.1 rows 14, 16, and 17. This brief follow
 - Frozen V1 interpreter/runtime sources, `gc_interface.hpp`, `src/main.cpp`, and `tests/gc_tests.cpp` remain unchanged. No outstanding T2 blockers.
 - T2 files: `cmake/gcd_v2.cmake`; `contracts/{schemas,examples}/{heap-snapshot,trace-batch}*`; `include/memory/{observer,heap,object}.hpp`; `src/memory/{heap,mark,sweep}.cpp`; `tests/v2/{diagnostics_tests,event_buffer_tests,snapshot_tests,runner_tests.sh}`; `tools/gcd_runner/{event_buffer,snapshot_writer}.{hpp,cpp}` and `main.cpp`, `tracing_heap.{hpp,cpp}`; this log.
 - Commit series: `841be50` observer/invariants; `1949ce1` snapshots; `34e29df` trace buffering and runner wiring; `f7b0993` contracts/replay gates. The final completion-log commit follows.
+
+## T3 brief — controller and JVM execution backend
+
+### Source sections
+
+I.4; C.3; D.3–D.6; D.10; H.1–H.6; G.3. This brief keeps the specified two-engine process model, wire contracts, and security boundaries unchanged.
+
+### May create or modify
+
+- `java/**`: JDK-only Java 21 analyzer and launcher; `java/build.sh`.
+- `web/package.json`, `web/shared/**`, `web/server/**`: Node 22 workspaces, shared types/contracts, Fastify controller, adapters, subprocess supervision, schemas, and tests.
+- `contracts/schemas/**`: add/extend the request and JVM-result contracts; do not change existing V1/C++ result semantics.
+- `contracts/examples/**`, test fixtures, and this progress log as required by the T3 acceptance suite.
+
+### Must not modify
+
+- Existing C++ implementation and tests, including all T1/T2 files.
+- V1 interpreter/runtime, `include/gc_interface.hpp`, root `src/main.cpp`, and `tests/gc_tests.cpp`.
+- The architecture, API meanings, error mapping, process model, security policy, or metrics provenance fixed in Documents C, D, and H.
+- No Docker, database, queue, authentication, WebSockets, cloud service, or Java agent.
+
+### Ordered steps
+
+1. Build the Java 21 analyzer using only JDK APIs: parse source, locate public type and `main`, compile with `-proc:none -Xlint:all` into the isolated classes directory, and emit analysis/compile diagnostics and timing.
+2. Add the Java launcher and shutdown hook: invoke the selected main class, catch `Throwable`, report exception class/message/top 20 frames, and write the specified MXBean totals even when user code exits or throws.
+3. Add `java/build.sh` using `javac` and `jar`; build the analyzer/launcher tools artifact without third-party Java dependencies.
+4. Create the Node 22/npm workspaces and shared request/result types and schemas; configure strict TypeScript, Fastify, Ajv Draft 2020-12, Vitest, and the specified engine defaults/limits.
+5. Implement the controller: loopback-only server, Host/Origin/content-type checks, single-run semaphore, in-memory LRU and per-run directory, startup/exit cleanup, argument-array process spawning, process-group timeout/cancellation, environment scrubbing, platform-aware `prlimit`, and bounded stdout/stderr.
+6. Implement JVM and custom-runner adapters, GC-log parsing for JDK 21 Serial/G1, metrics/provenance/result assembly, schema validation, and D.10 health/samples/analyze/runs/cancel routes. Trace, snapshot, and region routes remain explicit 404 stubs in this phase.
+7. Add five Java and four toy samples plus G.3 unit/integration tests and JDK 21 Serial/G1 golden logs; exercise all expected outcomes and confirm no run process is left behind.
+8. Run the complete Java, Node, schema, and curl-level gates; record platform limitations and commit each completed T3 step and the task locally.
+
+### Commands
+
+- `./java/build.sh`
+- `npm --prefix web install`
+- `npm --prefix web test`
+- `npm --prefix web run build`
+- `npm --prefix web run lint`
+- Start the controller on loopback and run the G.3 HTTP acceptance suite; validate every emitted payload with Ajv Draft 2020-12.
+- Verify JDK 21 and Node 22 versions before the suite; check for orphaned analyzer/launcher/runner processes afterward.
+
+### Acceptance
+
+- A valid Java churn program returns captured stdout, parsed GC-log events, MXBean totals, and provenance-marked metrics; a toy program still uses the existing runner.
+- Syntax/type/no-main/package/exception/OOM/timeout/output-flood/System.exit/thread/cancel/JDK-unavailable cases meet G.3 expected status/error/cleanup behavior.
+- Serial and G1 JDK 21 GC logs match committed golden parser fixtures.
+- Hostile cross-origin and non-JSON POSTs are rejected; the server binds only to `127.0.0.1`; no shell command interpolation or user-controlled run-directory names.
+- Request, analysis, engine, and final result payloads validate against their versioned schemas; timeouts, output caps, environment scrubbing, and unsupported-platform `prlimit` reporting are explicit.
+- No C++ or frozen file changes; Node 22 strict typecheck/build, lint, Vitest, Java build, and all G.3 rows pass.
+
+### Stop conditions
+
+- Stop if a requirement would require changing a frozen C++/shared-interface file or any fixed architecture/API/security decision.
+- Stop if Java 21 or Node 22 cannot be used, a test demonstrates an existing C++ regression, or any gate fails three consecutive fix attempts.
+- Do not claim Linux process-limit coverage on this macOS host; verify and record the plan-defined `unsupported-platform` result instead.
+
+## T3 completion — controller and JVM execution backend
+
+- Steps 1–3: Java 21 analyzer (`java/analyzer`), launcher with shutdown-hook MXBean metrics (`java/launcher`), JSON helper, and `java/build.sh` (`javac -Xlint:all -Werror` + `jar`, JDK-only).
+- Steps 4–6: Node 22 workspaces (`web/shared`, `web/server`), strict TypeScript, Fastify loopback controller, Java and custom adapters, JDK 21 Serial/G1 GC-log parser, D.10 routes (`health`, `samples`, `analyze`, `runs`, `runs/:id`, `cancel`); trace, snapshot and region routes are explicit 404 stubs. Added `run-request` and `jvm-engine-result` schemas and extended `run-result` / `structured-error` (jvm engine, compile phase, `RESOURCE_LIMIT`, `PROGRAM_EXIT`).
+- Step 7: 5 Java and 4 toy samples; Vitest suite `web/server/test` (23 tests) covering the G.3 rows and golden Serial/G1 logs captured from JDK 21.0.12.1 (`web/server/test/fixtures`).
+- Defects found and fixed by the suite: (1) analyzer was launched with `-jar` though the jar has no manifest main class (now `-cp`); (2) `run-request.schema.json` failed Ajv strict mode (`type: object` missing in the engine-specific `allOf` branches), which prevented the controller from starting; (3) GC-log regex did not match padded tags (`[gc          ]`) so no pause was parsed; (4) HotSpot prints the `-XX:+ExitOnOutOfMemoryError` message to stdout, so OOM detection also checks stdout; (5) lint `prefer-const` in `process.ts`.
+- Gates (JDK 21.0.12.1, Node 22.23.3, macOS): `./java/build.sh`, `npm run build`, `npm run lint`, `npm test` (23/23) pass; no orphan `gcd-java`/`gcd_runner` processes afterwards. No C++ or frozen files changed.
+- Platform limitation: `prlimit` is Linux-only; this macOS host reports `unsupported-platform` in `limits.prlimit`. Linux process-limit coverage is not claimed. The OOM case relies on `-Xmx` plus `ExitOnOutOfMemoryError`, not prlimit.
+- Not verified here: a curl-level run against a started server (tests use Fastify `inject` with loopback host headers), and the "JDK missing" case is covered via a nonexistent `javaPath`, not by removing `java` from `PATH`.
+- Known gap: `toolVersions.jdk` reads `GCD_JDK_VERSION` from the environment and is `unknown` unless set, even though health probes the real version.

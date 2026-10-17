@@ -1,0 +1,19 @@
+{
+  "name": "garbage-cd-web",
+  "private": true,
+  "workspaces": ["shared", "server"],
+  "scripts": {
+    "build": "npm run build --workspace @gcd/shared && npm run build --workspace @gcd/server",
+    "test": "npm run test --workspace @gcd/server",
+    "lint": "eslint shared/src server/src server/test",
+    "dev": "npm run dev --workspace @gcd/server"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@types/node": "^22.13.4",
+    "eslint": "^9.20.1",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0",
+    "vitest": "^2.1.8"
+  }
+}
