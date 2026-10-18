@@ -3,6 +3,9 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { api, ApiFailure } from "./api";
 import { AstPanel } from "./components/AstPanel";
+import { HeapGraphPanel } from "./components/HeapGraphPanel";
+import { TimelinePanel } from "./components/TimelinePanel";
+import { useTrace } from "./useTrace";
 import { EditorPanel, type EditorCommand, type EditorDiagnostic } from "./components/EditorPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OutputPanel, type Jump } from "./components/OutputPanel";
@@ -21,7 +24,10 @@ function offsetOf(source: string, line: number, column: number): number {
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [leftTab, setLeftTab] = useState<"ast" | "stats">("ast");
+  const [heapTab, setHeapTab] = useState<"graph" | "timeline">("graph");
+  const [snapshotIndex, setSnapshotIndex] = useState(0);
   const [command, setCommand] = useState<EditorCommand | null>(null);
+  const trace = useTrace(state.run);
   const source = state.sources[state.engine];
   const active = isActive(state.run, state.runId);
   const status: RunStatus | "idle" = state.run?.status ?? (state.runId ? "running" : "idle");
@@ -36,6 +42,7 @@ export function App() {
   const onProgress = useCallback((run: RunResult) => dispatch({ type: "progress", run }), []);
   const onPollError = useCallback((message: string) => dispatch({ type: "failed", message }), []);
   useRunPolling(state.runId, onProgress, onPollError);
+  useEffect(() => setSnapshotIndex(0), [state.runId]);
 
   const jump = useCallback(
     (target: Jump) => {
@@ -107,9 +114,9 @@ export function App() {
           {state.requestError}
         </div>
       ) : null}
-      <PanelGroup direction="vertical" autoSaveId="gcd-main">
-        <Panel defaultSize={68} minSize={25}>
-          <PanelGroup direction="horizontal" autoSaveId="gcd-top">
+      <PanelGroup direction="vertical" autoSaveId="gcd-main-v2">
+        <Panel defaultSize={76} minSize={25}>
+          <PanelGroup direction="horizontal" autoSaveId="gcd-top-v2">
             <Panel defaultSize={50} minSize={20}>
               <ErrorBoundary label="editor">
                 <EditorPanel
@@ -124,33 +131,69 @@ export function App() {
             </Panel>
             <PanelResizeHandle className="handle" />
             <Panel defaultSize={50} minSize={20}>
-              <div className="tabs" role="tablist">
-                <button role="tab" aria-selected={leftTab === "ast"} onClick={() => setLeftTab("ast")}>
-                  AST
-                </button>
-                <button role="tab" aria-selected={leftTab === "stats"} onClick={() => setLeftTab("stats")}>
-                  Statistics
-                </button>
-              </div>
-              <div className="tab-body">
-                <ErrorBoundary label={leftTab === "ast" ? "AST" : "statistics"}>
-                  {leftTab === "ast" ? (
-                    <AstPanel
-                      analysis={state.run?.staticAnalysis}
-                      onSelectSpan={(span) =>
-                        setCommand((previous) => ({ seq: (previous?.seq ?? 0) + 1, kind: "highlight", ...span }))
-                      }
-                    />
-                  ) : (
-                    <StatsPanel run={state.run} />
-                  )}
-                </ErrorBoundary>
-              </div>
+              <PanelGroup direction="vertical" autoSaveId="gcd-right-v2">
+                <Panel defaultSize={32} minSize={10}>
+                  <div className="tabs" role="tablist">
+                    <button role="tab" aria-selected={leftTab === "ast"} onClick={() => setLeftTab("ast")}>
+                      AST
+                    </button>
+                    <button role="tab" aria-selected={leftTab === "stats"} onClick={() => setLeftTab("stats")}>
+                      Statistics
+                    </button>
+                  </div>
+                  <div className="tab-body">
+                    <ErrorBoundary label={leftTab === "ast" ? "AST" : "statistics"}>
+                      {leftTab === "ast" ? (
+                        <AstPanel
+                          analysis={state.run?.staticAnalysis}
+                          onSelectSpan={(span) =>
+                            setCommand((previous) => ({ seq: (previous?.seq ?? 0) + 1, kind: "highlight", ...span }))
+                          }
+                        />
+                      ) : (
+                        <StatsPanel run={state.run} />
+                      )}
+                    </ErrorBoundary>
+                  </div>
+                </Panel>
+                <PanelResizeHandle className="handle horizontal" />
+                <Panel defaultSize={68} minSize={15}>
+                  <div className="tabs" role="tablist">
+                    <button role="tab" aria-selected={heapTab === "graph"} onClick={() => setHeapTab("graph")}>
+                      Heap graph
+                    </button>
+                    <button role="tab" aria-selected={heapTab === "timeline"} onClick={() => setHeapTab("timeline")}>
+                      Timeline
+                    </button>
+                  </div>
+                  <div className="tab-body">
+                    <ErrorBoundary label={heapTab === "graph" ? "heap graph" : "timeline"}>
+                      {heapTab === "graph" ? (
+                        <HeapGraphPanel
+                          run={state.run}
+                          selectedIndex={snapshotIndex}
+                          onSelectIndex={setSnapshotIndex}
+                          tracePartial={trace.partial}
+                        />
+                      ) : (
+                        <TimelinePanel
+                          run={state.run}
+                          trace={trace}
+                          onSelectGc={(index) => {
+                            setSnapshotIndex(index);
+                            setHeapTab("graph");
+                          }}
+                        />
+                      )}
+                    </ErrorBoundary>
+                  </div>
+                </Panel>
+              </PanelGroup>
             </Panel>
           </PanelGroup>
         </Panel>
         <PanelResizeHandle className="handle horizontal" />
-        <Panel defaultSize={32} minSize={10}>
+        <Panel defaultSize={24} minSize={8}>
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected="true">
               Output

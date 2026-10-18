@@ -62,4 +62,23 @@ table { border-collapse: collapse; } .kv th { text-align: left; font-weight: 500
 .ast-row { display: flex; align-items: center; } .ast-row.selected { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .twisty, .ast-label { border: 0; background: none; padding: 0 3px; } .ast-label { text-align: left; font-family: var(--mono); font-size: 12px; }
 .kind { color: var(--accent); } .chip { margin-left: 6px; font-size: 10px; border: 1px solid var(--muted); border-radius: 8px; padding: 0 5px; }
-.legend { font-size: 12px; color: var(--muted); }
+.legend { font-size: 11px; color: var(--muted); margin: 0; }
+.heap, .timeline { display: flex; flex-direction: column; gap: 6px; height: 100%; }
+.heap-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.slider input { vertical-align: middle; }
+.graph-canvas { flex: 1; min-height: 160px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); }
+.why { min-height: 20px; }
+.swatch { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--muted); vertical-align: middle; margin: 0 2px 0 8px; }
+.swatch.survived { background: var(--ok); border-color: var(--ok); border-radius: 50%; }
+.swatch.freed { background: var(--error); border-color: var(--error); border-style: dashed; border-radius: 2px; }
+.swatch.live { background: var(--accent); border-color: var(--accent); border-radius: 50%; }
+.swatch.root { background: var(--panel); transform: rotate(45deg); }
+.swatch.estimated { background: var(--warn); border-color: var(--warn); }
+.timeline-svg { width: 100%; max-height: 300px; }
+.timeline-svg .axis { stroke: var(--muted); }
+.timeline-svg .axis-label { fill: var(--muted); font-size: 10px; }
+.bar-alloc { fill: var(--accent); } .bar-other { fill: var(--warn); }
+.live-line { stroke: var(--ok); stroke-width: 2; }
+.gc-marker line { stroke: var(--error); stroke-dasharray: 4 3; }
+.gc-marker text { fill: var(--error); font-size: 10px; }
+.gc-marker.clickable { cursor: pointer; }

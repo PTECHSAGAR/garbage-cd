@@ -145,3 +145,60 @@ export interface Sample {
   name: string;
   source: string;
 }
+
+export interface SnapshotObject {
+  id: string;
+  slot: number;
+  generation: number;
+  region: number | null;
+  allocSeq: number;
+  allocStatement: number;
+  /** null for program-end snapshots, where no mark phase ran. */
+  marked: boolean | null;
+  fields: Array<{ name: string; target: string | null }>;
+  discoveredBy?: { parent: string | null; field: string | null; root: string | null };
+}
+
+export interface HeapSnapshot {
+  schema: "gcd.heap-snapshot/1";
+  runId: string;
+  index: number;
+  point: "mark_complete" | "program_end";
+  gcIndex: number | null;
+  statementIndex: number;
+  totalObjects: number;
+  totalEdges: number;
+  truncated: boolean;
+  roots: Array<{ name: string; target: string }>;
+  objects: SnapshotObject[];
+}
+
+export interface SnapshotIndexEntry {
+  index: number;
+  gcIndex: number | null;
+  point: "mark_complete" | "program_end";
+  objectCount: number;
+  truncated: boolean;
+}
+
+/** `[seq, kind, statementIndex, ...args]` as defined by D.9. */
+export type TraceEvent = [number, string, number, ...unknown[]];
+
+export interface TraceBatch {
+  schema: "gcd.trace-batch/1";
+  runId: string;
+  batch: number;
+  firstSeq: number;
+  lastSeq: number;
+  droppedTotal: number;
+  strings: Record<string, string>;
+  events: TraceEvent[];
+}
+
+export interface TracePage {
+  batches: TraceBatch[];
+  next: number | null;
+  trailer: { type: "end"; lastSeq: number; complete: boolean; droppedByKind?: Record<string, number> } | null;
+}
+
+export const MAX_SNAPSHOT_OBJECTS = 2_000;

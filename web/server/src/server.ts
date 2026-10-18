@@ -7,6 +7,7 @@ import { runProcess } from "./process.js";
 import { analyzeJavaSource, executeJava, type AdapterOutcome } from "./java-adapter.js";
 import { executeCustom } from "./custom-adapter.js";
 import { analyzeToy } from "./toy-analyzer.js";
+import { loadTrace, pageTrace, TRACE_MAX_EVENTS } from "./trace-store.js";
 import { ContractValidator } from "./contract-validator.js";
 import type { Config } from "./config.js";
 import { config as defaultConfig } from "./config.js";
@@ -602,10 +603,17 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
     return reply.code(202).send({ runId: request.params.id, status: "cancelling" });
   });
 
-  const clientFiles = await indexClientFiles(config.clientDist);
+  let clientFiles = await indexClientFiles(config.clientDist);
+  let clientIndexedAt = Date.now();
   app.get("/*", async (request, reply) => {
     const pathname = request.url.split("?")[0] ?? "/";
-    const file = clientFiles.get(pathname === "/" ? "/index.html" : pathname);
+    const wanted = pathname === "/" ? "/index.html" : pathname;
+    // A rebuilt client has new hashed file names; re-index on a miss (at most once a second).
+    if (!clientFiles.has(wanted) && Date.now() - clientIndexedAt > 1_000) {
+      clientFiles = await indexClientFiles(config.clientDist);
+      clientIndexedAt = Date.now();
+    }
+    const file = clientFiles.get(wanted);
     if (!file) return reply.code(404).send({ error: "Not found" });
     return reply
       .header("content-type", contentTypes[extname(file)] ?? "application/octet-stream")
@@ -615,8 +623,74 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
   });
 
   app.get("/api/benchmarks", async () => []);
-  app.get("/api/runs/:id/trace", async (_request, reply) => reply.code(404).send({ error: "Trace API is not enabled in Phase 2" }));
-  app.get("/api/runs/:id/snapshots/:index", async (_request, reply) => reply.code(404).send({ error: "Snapshot API is not enabled in Phase 2" }));
+  const traceRun = (id: string, reply: FastifyReply): StoredRun | null => {
+    const run = runs.get(id);
+    if (!run) {
+      reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "Run not found") });
+      return null;
+    }
+    if (run.result.engine !== "custom") {
+      reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "Not available for HotSpot: object graph and event trace are not exposed through supported APIs") });
+      return null;
+    }
+    if (run.result.status === "running" || run.result.status === "queued") {
+      reply.code(409).send({ error: structuredError("BUSY", "request", "Run is still in progress") });
+      return null;
+    }
+    return run;
+  };
+
+  app.get<{ Params: { id: string }; Querystring: { afterSeq?: string; maxEvents?: string } }>(
+    "/api/runs/:id/trace",
+    async (request, reply) => {
+      const run = traceRun(request.params.id, reply);
+      if (!run) return reply;
+      const afterSeq = request.query.afterSeq === undefined ? -1 : Number(request.query.afterSeq);
+      const maxEvents = request.query.maxEvents === undefined ? 10_000 : Number(request.query.maxEvents);
+      if (!Number.isSafeInteger(afterSeq) || afterSeq < -1 || !Number.isSafeInteger(maxEvents) || maxEvents < 1 || maxEvents > TRACE_MAX_EVENTS) {
+        return reply.code(400).send({ error: structuredError("BAD_REQUEST", "request", `afterSeq must be an integer >= -1 and maxEvents an integer in 1..${TRACE_MAX_EVENTS}`) });
+      }
+      try {
+        const trace = await loadTrace(join(run.runDir, "trace.ndjson"));
+        if (!trace) return reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "This run was not traced; request a trace level above off") });
+        const page = pageTrace(trace, afterSeq, maxEvents);
+        for (const batch of page.batches) {
+          const problems = validator.validate("trace-batch.schema.json", batch);
+          if (problems.length > 0) {
+            return reply.code(500).send({ error: structuredError("SCHEMA_VIOLATION", "controller", problems.join("; ")) });
+          }
+        }
+        return reply.send({ batches: page.batches, next: page.next, trailer: page.trailer, summary: run.result.trace ?? null });
+      } catch (error) {
+        return reply.code(500).send({ error: structuredError("INTERNAL", "controller", String(error)) });
+      }
+    }
+  );
+
+  app.get<{ Params: { id: string; index: string } }>("/api/runs/:id/snapshots/:index", async (request, reply) => {
+    const run = traceRun(request.params.id, reply);
+    if (!run) return reply;
+    if (!/^(0|[1-9][0-9]{0,5})$/.test(request.params.index)) {
+      return reply.code(400).send({ error: structuredError("BAD_REQUEST", "request", "Snapshot index must be a non-negative integer") });
+    }
+    let text: string;
+    try {
+      text = await readFile(join(run.runDir, "snapshots", `snapshot-${request.params.index}.json`), "utf8");
+    } catch {
+      return reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "Snapshot not found; request snapshots when starting the run") });
+    }
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(text);
+    } catch (error) {
+      return reply.code(500).send({ error: structuredError("SCHEMA_VIOLATION", "controller", `Snapshot is not valid JSON: ${String(error)}`) });
+    }
+    const problems = validator.validate("heap-snapshot.schema.json", snapshot);
+    if (problems.length > 0) {
+      return reply.code(500).send({ error: structuredError("SCHEMA_VIOLATION", "controller", problems.join("; ")) });
+    }
+    return reply.send(snapshot);
+  });
   app.get("/api/runs/:id/regions", async (_request, reply) => reply.code(404).send({ error: "Region API is not enabled in Phase 2" }));
 
   app.addHook("onClose", async () => {

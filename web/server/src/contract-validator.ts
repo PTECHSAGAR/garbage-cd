@@ -14,6 +14,8 @@ export class ContractValidator {
     const schemaDir = join(config.root, "contracts", "schemas");
     const names = [
       "custom-engine-result.schema.json",
+      "heap-snapshot.schema.json",
+      "trace-batch.schema.json",
       "jvm-engine-result.schema.json",
       "run-request.schema.json",
       "run-result.schema.json",

@@ -5,6 +5,7 @@ import type { Config } from "./config.js";
 import { commandWithLimits, runProcess } from "./process.js";
 import { safeRunEnvironment } from "./run-environment.js";
 import { processGroupTracking } from "./process-meta.js";
+import { loadTrace, summarizeTrace } from "./trace-store.js";
 
 export interface CustomOutcome {
   status: RunResult["status"];
@@ -147,6 +148,12 @@ export async function executeCustom(
         errors: [makeError("SCHEMA_VIOLATION", "Runner result is missing required envelope fields", "controller")]
       }
     };
+  }
+  try {
+    runnerResult.trace = summarizeTrace(await loadTrace(tracePath));
+  } catch (error) {
+    runnerResult.trace = { available: true, complete: false, eventCount: 0, droppedCount: 0, batchCount: 0 };
+    runnerResult.errors = [...runnerResult.errors, makeError("INTERNAL", `Trace file is unreadable: ${String(error)}`, "controller")];
   }
   return { status: runnerResult.status, result: runnerResult as CustomOutcome["result"] };
 }

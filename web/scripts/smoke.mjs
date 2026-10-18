@@ -32,11 +32,11 @@ async function waitReady() {
   throw new Error("controller did not start");
 }
 
-async function run(engine, source) {
+async function run(engine, source, options) {
   const response = await fetch(`${base}/api/runs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ schema: "gcd.run-request/1", engine, source })
+    body: JSON.stringify({ schema: "gcd.run-request/1", engine, source, ...(options ? { options } : {}) })
   });
   if (response.status !== 202) throw new Error(`submit ${engine}: ${response.status} ${await response.text()}`);
   const { runId } = await response.json();
@@ -55,9 +55,14 @@ try {
   check(jvm.status === "succeeded" && jvm.output.stdout.includes("allocated"), `jvm sample status=${jvm.status}`);
   check(jvm.staticAnalysis?.ast !== null, "jvm run includes an AST");
   const custom = readdirSync(join(root, "server/samples/custom")).includes("sample.gc");
-  const toy = await run("custom", custom ? sample("custom", "sample.gc") : "");
+  const toy = await run("custom", custom ? sample("custom", "sample.gc") : "", { custom: { traceLevel: "mutator", snapshots: true } });
   check(toy.status === "succeeded", `custom sample status=${toy.status}`);
   check(toy.engineResult?.collections?.length >= 1, "custom run reports per-GC records");
+  check(toy.trace?.available === true && toy.trace?.complete === true, "custom run has a complete trace");
+  const trace = await (await fetch(`${base}/api/runs/${toy.runId}/trace`)).json();
+  check(trace.batches?.length >= 1 && trace.next === null, "trace endpoint returns batches");
+  const snapshot = await (await fetch(`${base}/api/runs/${toy.runId}/snapshots/0`)).json();
+  check(snapshot.schema === "gcd.heap-snapshot/1" && snapshot.objects.length === 2, "snapshot endpoint returns the GC #1 heap");
 } catch (error) {
   console.error(String(error));
   failed = true;
