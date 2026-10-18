@@ -4,6 +4,9 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { api, ApiFailure } from "./api";
 import { AstPanel } from "./components/AstPanel";
 import { HeapGraphPanel } from "./components/HeapGraphPanel";
+import { generate } from "@gcd/shared";
+import { BuilderPanel } from "./components/BuilderPanel";
+import { TestLab } from "./components/TestLab";
 import { BenchmarkPanel } from "./components/BenchmarkPanel";
 import { ComparePanel } from "./components/ComparePanel";
 import { RegionPanel } from "./components/RegionPanel";
@@ -26,7 +29,7 @@ function offsetOf(source: string, line: number, column: number): number {
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [bottomTab, setBottomTab] = useState<"output" | "compare" | "benchmarks">("output");
+  const [bottomTab, setBottomTab] = useState<"output" | "compare" | "benchmarks" | "lab">("output");
   const [leftTab, setLeftTab] = useState<"ast" | "stats">("ast");
   const [heapTab, setHeapTab] = useState<"graph" | "regions" | "timeline">("graph");
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
@@ -36,6 +39,17 @@ export function App() {
   const trace = useTrace(state.run);
   const source = state.sources[state.engine];
   const active = isActive(state.run, state.runId);
+  const builderShown = state.builder.open && state.engine === "custom";
+  const generated = useMemo(() => generate(state.builder.spec), [state.builder.spec]);
+  const customSource = state.sources.custom;
+  const diverged = state.builder.appliedSource !== null && customSource !== state.builder.appliedSource;
+  // Live sync: after the first explicit generate, spec changes rewrite the editor until the user edits the code.
+  useEffect(() => {
+    const { appliedSource, liveSync } = state.builder;
+    if (builderShown && liveSync && appliedSource !== null && customSource === appliedSource && generated.source !== appliedSource) {
+      dispatch({ type: "builder-apply", source: generated.source });
+    }
+  }, [builderShown, generated.source]);
   const status: RunStatus | "idle" = state.run?.status ?? (state.runId ? "running" : "idle");
 
   const [setupProblems, setSetupProblems] = useState<string[]>([]);
@@ -108,7 +122,7 @@ export function App() {
   const run = async () => {
     try {
       const { runId } = await api.startRun(state.engine, source, state.customOptions);
-      dispatch({ type: "started", runId });
+      dispatch({ type: "started", runId, source });
     } catch (error) {
       dispatch({ type: "failed", message: error instanceof ApiFailure ? `${error.error.code}: ${error.message}` : String(error) });
     }
@@ -152,16 +166,47 @@ export function App() {
         <Panel defaultSize={76} minSize={25}>
           <PanelGroup direction="horizontal" autoSaveId="gcd-top-v2">
             <Panel defaultSize={50} minSize={20}>
-              <ErrorBoundary label="editor">
-                <EditorPanel
-                  source={source}
-                  language={state.engine === "jvm" ? "java" : "gcd-toy"}
-                  diagnostics={diagnostics}
-                  command={command}
-                  readOnly={active}
-                  onChange={(value) => dispatch({ type: "edit", source: value })}
-                />
-              </ErrorBoundary>
+              <div className="left-column">
+                {state.engine === "custom" ? (
+                  <button
+                    className="builder-toggle"
+                    aria-expanded={state.builder.open}
+                    onClick={() => dispatch({ type: "builder", patch: { open: !state.builder.open } })}
+                  >
+                    {state.builder.open ? "▾" : "▸"} Object builder <span className="muted">(set object counts, cycles and chains; or just write code below)</span>
+                  </button>
+                ) : null}
+                {builderShown ? (
+                  <div className="builder-scroll">
+                    <ErrorBoundary label="object builder">
+                      <BuilderPanel
+                        spec={state.builder.spec}
+                        generated={generated}
+                        liveSync={state.builder.liveSync}
+                        diverged={diverged}
+                        applied={state.builder.appliedSource !== null}
+                        run={state.run}
+                        runSource={state.runSource}
+                        onSpec={(patch) => dispatch({ type: "builder-spec", patch })}
+                        onApply={() => dispatch({ type: "builder-apply", source: generated.source })}
+                        onLiveSync={(value) => dispatch({ type: "builder", patch: { liveSync: value } })}
+                      />
+                    </ErrorBoundary>
+                  </div>
+                ) : null}
+                <div className="editor-slot">
+                  <ErrorBoundary label="editor">
+                    <EditorPanel
+                      source={source}
+                      language={state.engine === "jvm" ? "java" : "gcd-toy"}
+                      diagnostics={diagnostics}
+                      command={command}
+                      readOnly={active}
+                      onChange={(value) => dispatch({ type: "edit", source: value })}
+                    />
+                  </ErrorBoundary>
+                </div>
+              </div>
             </Panel>
             <PanelResizeHandle className="handle" />
             <Panel defaultSize={50} minSize={20}>
@@ -251,6 +296,9 @@ export function App() {
             <button role="tab" aria-selected={bottomTab === "compare"} onClick={() => setBottomTab("compare")}>
               Compare
             </button>
+            <button role="tab" aria-selected={bottomTab === "lab"} onClick={() => setBottomTab("lab")}>
+              Test lab
+            </button>
             <button role="tab" aria-selected={bottomTab === "benchmarks"} onClick={() => setBottomTab("benchmarks")}>
               Benchmarks
             </button>
@@ -261,6 +309,8 @@ export function App() {
                 <OutputPanel run={state.run} onJump={jump} />
               ) : bottomTab === "compare" ? (
                 <ComparePanel history={state.history} />
+              ) : bottomTab === "lab" ? (
+                <TestLab busy={active} />
               ) : (
                 <BenchmarkPanel />
               )}

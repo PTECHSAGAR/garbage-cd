@@ -94,3 +94,29 @@ table { border-collapse: collapse; } .kv th { text-align: left; font-weight: 500
 .verdict { font-weight: 600; } .verdict-pass { color: var(--ok); } .verdict-fail { color: var(--error); } .verdict-inconclusive { color: var(--warn); }
 .compare td, .benchmarks td { vertical-align: top; }
 .hypotheses th, .hypotheses thead th { text-align: left; }
+.left-column { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.builder-toggle { text-align: left; border-radius: 0; border-width: 0 0 1px 0; padding: 4px 10px; background: var(--panel); }
+.builder-scroll { max-height: 55%; overflow: auto; border-bottom: 1px solid var(--border); background: var(--panel); }
+.editor-slot { flex: 1; min-height: 0; }
+.builder { padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+.builder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; align-items: end; }
+.builder .field { display: flex; flex-direction: column; font-size: 12px; gap: 2px; }
+.builder .field.wide { grid-column: 1 / -1; }
+.builder input[type="number"], .builder input:not([type]) { width: 100%; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; }
+.builder input.invalid { border-color: var(--error); }
+.builder .stepper { display: flex; gap: 6px; align-items: center; }
+.builder .stepper input[type="number"] { width: 80px; }
+.builder .stepper input[type="range"] { flex: 1; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.builder-summary { margin: 0; }
+.builder-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.over { color: var(--error); font-weight: 600; }
+code.cli { display: inline-block; max-width: 100%; overflow-wrap: anywhere; font: 11px var(--mono); background: var(--bg); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }
+.verify { margin: 0; padding: 4px 8px; border-radius: 4px; } .verify.pass { border: 1px solid var(--ok); color: var(--ok); }
+.verify.fail { border: 1px solid var(--error); color: var(--error); }
+.pass { color: var(--ok); } .fail { color: var(--error); }
+.lab-config { display: flex; flex-wrap: wrap; gap: 14px; } .lab-config fieldset { border: 1px solid var(--border); border-radius: 4px; }
+.lab input[type="number"] { width: 70px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.failed-row { background: color-mix(in srgb, var(--error) 12%, transparent); }
+.grid td.left, .grid th.left { text-align: left; white-space: normal; }
+.lab ul { margin: 4px 0 0; padding-left: 18px; text-align: left; font-size: 12px; }

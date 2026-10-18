@@ -203,7 +203,7 @@ describe("store", () => {
       samples: { jvm: [{ engine: "jvm", name: "A", source: "a" }], custom: [{ engine: "custom", name: "B", source: "b" }] }
     });
     expect(withSamples.sources).toEqual({ jvm: "a", custom: "b" });
-    const started = reducer(withSamples, { type: "started", runId: "r1" });
+    const started = reducer(withSamples, { type: "started", runId: "r1", source: "" });
     expect(isActive(started.run, started.runId)).toBe(true);
     expect(reducer(started, { type: "progress", run: run({ runId: "other" }) }).run).toBeNull();
     const done = reducer(started, { type: "progress", run: run({ runId: "r1" }) });

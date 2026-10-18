@@ -62,7 +62,14 @@ export function RegionCanvas({
       if (event.target === instance) onSelectRef.current(null);
     });
     cy.current = instance;
+    // The pane is resizable and may be laid out after the graph; refit whenever its size changes.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      instance.resize();
+      instance.fit(undefined, 20);
+    });
+    if (observer && host.current) observer.observe(host.current);
     return () => {
+      observer?.disconnect();
       instance.destroy();
       cy.current = null;
     };

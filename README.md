@@ -52,6 +52,29 @@ scripts/start.sh           # http://127.0.0.1:4177/
 > code. Run it in a VM or WSL instance when using other people's programs.
 > See [docs/v2/security.md](docs/v2/security.md).
 
+## Writing programs: by hand, by builder, or from the command line
+
+All three produce ordinary toy code, so they can be mixed freely.
+
+- **By hand.** Type into the editor as before.
+- **Object builder** (custom engine, toolbar of the editor column). Set the number of objects with a
+  counter, the cycle/chain mix with a slider, chain and cycle length ranges, extra links per object (a
+  range, optionally within a locality window), how many groups stay rooted and over how many
+  unroot-and-`gc()` rounds the rest die. The panel shows object, group, reference and byte counts
+  against the 64 KiB limit and **predicts** how many objects each `gc()` will free. *Generate into
+  editor* writes the program; *Live sync* keeps it up to date until you edit the code by hand (then the
+  builder stops overwriting it and tells you). After a run, the panel states whether the real
+  collector matched the prediction.
+- **Command line.** `node web/scripts/gen-toy.mjs --objects 200 --cycle-share 60 --chain-length 3-8
+  --extra-links 0-2 --locality 10 --keep-roots 30 --rounds 3 --seed 7 > p.gc` prints exactly the program
+  the builder would (`--expected` prints the prediction as JSON); run it with `build/gcd_runner --source
+  p.gc --result r.json`. The builder shows the equivalent flags for whatever you have set.
+
+**Test lab** (bottom tab, or `npm run lab` in `web/` against a running controller): generates preset and
+seeded random scenarios, runs each under four heap variants (plain, regions, slot reuse, both) and
+checks allocations, objects freed and live after every collection, the program-end snapshot and the
+region counters against the builder's prediction. The same matrix runs in the test suite.
+
 ## Development
 
 ```sh

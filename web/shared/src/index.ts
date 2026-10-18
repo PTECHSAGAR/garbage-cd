@@ -233,6 +233,8 @@ export const MAX_RENDERED_REGIONS = 1_000;
 export const REGION_SIZES = [0, 16, 32, 64, 128, 256] as const;
 
 export * from "./compare.js";
+export * from "./builder.js";
+export * from "./lab.js";
 
 export type Verdict = "pass" | "fail" | "inconclusive";
 

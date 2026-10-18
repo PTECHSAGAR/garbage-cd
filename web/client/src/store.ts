@@ -1,4 +1,4 @@
-import type { Engine, RunResult, Sample } from "@gcd/shared";
+import { defaultSpec, normalizeSpec, type BuilderSpec, type Engine, type RunResult, type Sample } from "@gcd/shared";
 import type { CustomOptions } from "./api";
 
 export interface State {
@@ -12,6 +12,15 @@ export interface State {
   customOptions: CustomOptions;
   /** Finished runs of this session, newest last, for the Compare tab. */
   history: RunResult[];
+  /** Source of the run that is displayed, so a prediction is only compared with the code it was made for. */
+  runSource: string | null;
+  builder: {
+    open: boolean;
+    spec: BuilderSpec;
+    liveSync: boolean;
+    /** The text the builder last wrote into the editor; null until the first explicit generate. */
+    appliedSource: string | null;
+  };
 }
 
 export type Action =
@@ -19,7 +28,10 @@ export type Action =
   | { type: "engine"; engine: Engine }
   | { type: "sample"; name: string }
   | { type: "edit"; source: string }
-  | { type: "started"; runId: string }
+  | { type: "started"; runId: string; source: string }
+  | { type: "builder"; patch: Partial<State["builder"]> }
+  | { type: "builder-spec"; patch: Partial<BuilderSpec> }
+  | { type: "builder-apply"; source: string }
   | { type: "progress"; run: RunResult }
   | { type: "failed"; message: string }
   | { type: "options"; options: Partial<CustomOptions> }
@@ -34,7 +46,9 @@ export const initialState: State = {
   run: null,
   requestError: null,
   customOptions: { regionSize: 0, slotReuse: false },
-  history: []
+  history: [],
+  runSource: null,
+  builder: { open: false, spec: defaultSpec(), liveSync: true, appliedSource: null }
 };
 
 export function reducer(state: State, action: Action): State {
@@ -72,7 +86,18 @@ export function reducer(state: State, action: Action): State {
       if (action.source === state.sources[state.engine]) return state;
       return { ...state, sampleName: "", sources: { ...state.sources, [state.engine]: action.source } };
     case "started":
-      return { ...state, runId: action.runId, run: null, requestError: null };
+      return { ...state, runId: action.runId, run: null, requestError: null, runSource: action.source };
+    case "builder":
+      return { ...state, builder: { ...state.builder, ...action.patch } };
+    case "builder-spec":
+      return { ...state, builder: { ...state.builder, spec: normalizeSpec({ ...state.builder.spec, ...action.patch }) } };
+    case "builder-apply":
+      return {
+        ...state,
+        sampleName: "",
+        sources: { ...state.sources, custom: action.source },
+        builder: { ...state.builder, appliedSource: action.source }
+      };
     case "progress": {
       if (action.run.runId !== state.runId) return state;
       const finished = action.run.status !== "running" && action.run.status !== "queued";

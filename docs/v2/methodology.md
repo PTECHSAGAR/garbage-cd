@@ -78,6 +78,23 @@ reference runs at the same scale. H2 uses a random graph with out-degree ≤ 2 a
 unfavourable case for regions). k\* uses the measured region overhead per collection and the H2 saving
 interpolated log-log at the workload's live-object count.
 
+## Builder-driven end-to-end testing (the lab)
+
+`web/shared/src/builder.ts` turns a declarative spec (object count, cycle/chain mix, length ranges,
+extra-link range and locality window, kept-root share, unroot rounds) into toy source **and** an
+independently computed prediction: a plain reachability walk over the same edges gives, for every
+`gc()`, how many objects must be freed and how many must remain, plus the number of reference fields
+held by live objects. `web/shared/src/lab.ts` defines ten preset scenarios, a seeded fuzzer over the
+whole spec space, four heap variants (plain, regions of 16, slot reuse, regions of 64 + slot reuse) and
+the checks: run status, allocations, per-collection freed / live-before / live-after, totals, the
+program-end snapshot (object count and reference fields) and, with regions, the verified flag, live,
+allocated and edge totals of the region graph. Because the prediction does not come from the
+collector, a mismatch is a real disagreement. The matrix runs in `web/server/test/lab.test.ts` (ten
+presets and 25 fuzzed scenarios × 4 variants, against the real runner), in the dashboard's Test lab
+tab, and from the command line (`web/scripts/lab.mjs`). Generator invariants (ranges, locality, share,
+round counts, determinism, conservation, and an independent model replay of the emitted statements)
+are unit tested.
+
 ## Correctness evidence used by the hypotheses
 
 Release test binaries are run with the benchmark: 10,000 property seeds × 8 variants, 10,000
