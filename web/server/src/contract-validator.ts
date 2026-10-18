@@ -16,6 +16,7 @@ export class ContractValidator {
       "custom-engine-result.schema.json",
       "heap-snapshot.schema.json",
       "region-graph.schema.json",
+      "benchmark-summary.schema.json",
       "trace-batch.schema.json",
       "jvm-engine-result.schema.json",
       "run-request.schema.json",

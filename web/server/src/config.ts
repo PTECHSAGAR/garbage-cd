@@ -13,6 +13,7 @@ export interface Config {
   runTimeoutMs: number;
   analysisTimeoutMs: number;
   clientDist: string;
+  benchmarkRoot: string;
   runnerPath: string;
   javaPath: string;
   javaJarPath: string;
@@ -53,6 +54,7 @@ export const config: Config = {
   runTimeoutMs: 30_000,
   analysisTimeoutMs: 15_000,
   clientDist: resolve(root, "web/client/dist"),
+  benchmarkRoot: resolve(root, "bench/results"),
   runnerPath: process.env.GCD_RUNNER ?? runnerCandidates.find(existsSync) ?? runnerCandidates[0]!,
   javaPath: isAbsolute(javaPath) ? javaPath : "java",
   javaJarPath: resolve(root, "build/java/gcd-java-tools.jar"),

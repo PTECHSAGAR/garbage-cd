@@ -83,3 +83,14 @@ table { border-collapse: collapse; } .kv th { text-align: left; font-weight: 500
 .gc-marker text { fill: var(--error); font-size: 10px; }
 .gc-marker.clickable { cursor: pointer; }
 .topbar label { white-space: nowrap; }
+.ratio-bar rect { opacity: .35; } .ratio-bar.real rect { opacity: 1; }
+.ratio-bar.v0 rect, .swatch.v0 { fill: var(--accent); background: var(--accent); }
+.ratio-bar.v1 rect, .swatch.v1 { fill: var(--warn); background: var(--warn); }
+.ratio-bar.v2 rect, .swatch.v2 { fill: var(--ok); background: var(--ok); }
+.ratio-bar.v3 rect, .swatch.v3 { fill: #a371f7; background: #a371f7; }
+.whisker { stroke: var(--text); stroke-width: 1.3; }
+.hypotheses .evidence { text-align: left; white-space: normal; max-width: 420px; font-size: 12px; }
+.hypotheses td { text-align: left; white-space: normal; }
+.verdict { font-weight: 600; } .verdict-pass { color: var(--ok); } .verdict-fail { color: var(--error); } .verdict-inconclusive { color: var(--warn); }
+.compare td, .benchmarks td { vertical-align: top; }
+.hypotheses th, .hypotheses thead th { text-align: left; }

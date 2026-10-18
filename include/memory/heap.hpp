@@ -6,6 +6,7 @@
 // the gc::IHeap interface.
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,8 +51,9 @@ public:
     const Options& options() const { return options_; }
     // I6: throws std::logic_error if the region counters differ from a from-scratch recomputation.
     void verifyRegions() const;
-    // Region metadata snapshot (empty when regions are disabled).
-    RegionGraph regionGraph() const;
+    // Region metadata snapshot (empty when regions are disabled). `verify` runs verifyRegions()
+    // to fill `verified`; pass false to measure the export alone.
+    RegionGraph regionGraph(bool verify = true) const;
     // Test hook (G.1 row 12): lowers the generation at which a slot is retired.
     void setGenerationLimitForTesting(std::uint32_t limit);
     std::size_t slotCount() const { return objects_.size(); }
@@ -82,6 +84,9 @@ private:
     std::vector<std::uint32_t> generations_;   // per slot; used only with slot reuse
     std::vector<std::size_t> freeSlots_;       // LIFO free list; used only with slot reuse
     std::uint32_t generationLimit_ = 0x80000000u;
+    // Mark spanning forest, indexed by slot. Filled only while an observer asks for it, so the
+    // common object stays small and the unobserved mark loop does no parent bookkeeping.
+    std::vector<std::optional<MarkDiscovery>> discoveries_;
 };
 
 } // namespace memory

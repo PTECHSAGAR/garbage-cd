@@ -24,7 +24,6 @@ public:
     bool marked = false;
     std::uint64_t allocSeq = 0;
     std::uint32_t allocStatement = 0;
-    std::optional<MarkDiscovery> discoveredBy;
 
 private:
     std::unordered_map<std::string, gc::ObjectHandle> fields_;

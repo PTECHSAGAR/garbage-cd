@@ -38,6 +38,9 @@ gc::ObjectHandle Heap::allocate() {
         }
     }
     stats_.totalAllocations++;
+    if (slot < discoveries_.size()) {
+        discoveries_[slot].reset();  // do not show a previous occupant's discovery
+    }
     if (regions_.enabled()) {
         regions_.onAllocate(slot);
     }
@@ -157,7 +160,9 @@ HeapView Heap::makeView() const {
         objectView.allocSeq = object.allocSeq;
         objectView.allocStatement = object.allocStatement;
         objectView.marked = object.marked;
-        objectView.discoveredBy = object.discoveredBy;
+        if (i < discoveries_.size()) {
+            objectView.discoveredBy = discoveries_[i];
+        }
         objectView.fields.reserve(object.fields().size());
         for (const auto& field : object.fields()) {
             objectView.fields.push_back(HeapFieldView{field.first, field.second});
@@ -282,18 +287,20 @@ void Heap::verifyInvariants() const {
         if (!slotInUse_[i] || objects_[i] == nullptr) {
             continue;
         }
-        const Object& object = *objects_[i];
-        if (!object.discoveredBy) {
+        const auto discoveryOf = [this](std::size_t slot) -> const std::optional<MarkDiscovery>& {
+            static const std::optional<MarkDiscovery> none;
+            return slot < discoveries_.size() ? discoveries_[slot] : none;
+        };
+        if (!discoveryOf(i)) {
             fail("I7 live object has no mark-forest discoverer");
         }
         std::unordered_set<std::size_t> path;
-        const Object* current = &object;
         std::size_t currentSlot = i;
-        while (current->discoveredBy && current->discoveredBy->parent) {
+        while (discoveryOf(currentSlot) && discoveryOf(currentSlot)->parent) {
             if (!path.insert(currentSlot).second) {
                 fail("I7 mark-forest contains a cycle");
             }
-            const MarkDiscovery& discovery = *current->discoveredBy;
+            const MarkDiscovery& discovery = *discoveryOf(currentSlot);
             if (!discovery.field || discovery.root) {
                 fail("I7 parent discovery has invalid edge metadata");
             }
@@ -303,13 +310,12 @@ void Heap::verifyInvariants() const {
                 fail("I7 parent discovery is not a real field edge");
             }
             currentSlot = slotOf(*discovery.parent);
-            current = parent;
         }
-        if (!current->discoveredBy || !current->discoveredBy->root ||
-            current->discoveredBy->parent || current->discoveredBy->field) {
+        const auto& terminal = discoveryOf(currentSlot);
+        if (!terminal || !terminal->root || terminal->parent || terminal->field) {
             fail("I7 mark-forest path does not terminate at a root");
         }
-        const auto root = roots_.find(*current->discoveredBy->root);
+        const auto root = roots_.find(*terminal->root);
         if (root == roots_.end() || root->second != handleFor(currentSlot)) {
             fail("I7 root discovery is not a real root edge");
         }
@@ -404,17 +410,19 @@ void Heap::verifyRegions() const {
     }
 }
 
-RegionGraph Heap::regionGraph() const {
+RegionGraph Heap::regionGraph(bool verify) const {
     RegionGraph graph;
     if (!regions_.enabled()) {
         return graph;
     }
     graph.regionSize = regions_.regionSize();
-    try {
-        verifyRegions();
-        graph.verified = true;
-    } catch (const std::logic_error&) {
-        graph.verified = false;
+    if (verify) {
+        try {
+            verifyRegions();
+            graph.verified = true;
+        } catch (const std::logic_error&) {
+            graph.verified = false;
+        }
     }
     const auto& table = regions_.regions();
     std::vector<std::uint64_t> rootTargets(table.size(), 0);

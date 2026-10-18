@@ -231,3 +231,50 @@ export interface RegionGraph {
 
 export const MAX_RENDERED_REGIONS = 1_000;
 export const REGION_SIZES = [0, 16, 32, 64, 128, 256] as const;
+
+export * from "./compare.js";
+
+export type Verdict = "pass" | "fail" | "inconclusive";
+
+export interface RatioWithCi {
+  ratio: number;
+  lo?: number | null;
+  hi?: number | null;
+  real?: boolean;
+}
+
+export interface BenchmarkSummary {
+  schema: "gcd.benchmark-summary/1";
+  id: string;
+  createdAt: string;
+  environment: Record<string, unknown>;
+  method: { resamples: number; minEffect: number; noiseRule: string };
+  collector: Array<{
+    group?: string;
+    workload: string;
+    variant: string;
+    samples: number;
+    medianTotalMs: number;
+    medianCollectMs: number;
+    total: RatioWithCi;
+    collect: RatioWithCi;
+  }>;
+  hypotheses: Array<{ id: string; statement: string; criterion: string; verdict: Verdict; evidence: string }>;
+  h2: Array<{ objects: number; snapshotMs: number; exportMs: number; ratio: number; lo?: number | null; hi?: number | null; snapshotBytes?: number | null; exportBytes?: number | null }>;
+  jvm: Array<{
+    program: string;
+    collector: "serial" | "g1";
+    runs: number;
+    gcCount?: number | null;
+    gcPauseTotalMs?: number | null;
+    heapAfterLastGcBytes?: number | null;
+    allocatedBytesMainThread?: number | null;
+    wallMs?: number | null;
+    jdk?: string;
+  }>;
+}
+
+export interface BenchmarkListing {
+  id: string;
+  createdAt: string;
+}

@@ -1,4 +1,4 @@
-import type { Engine, HeapSnapshot, RegionGraph, RunRequest, RunResult, Sample, TracePage } from "@gcd/shared";
+import type { BenchmarkListing, BenchmarkSummary, Engine, HeapSnapshot, RegionGraph, RunRequest, RunResult, Sample, TracePage } from "@gcd/shared";
 
 export interface ApiError {
   code: string;
@@ -78,5 +78,7 @@ export const api = {
     request<TracePage>(`/api/runs/${runId}/trace?afterSeq=${afterSeq}&maxEvents=${maxEvents}`),
   snapshot: (runId: string, index: number) => request<HeapSnapshot>(`/api/runs/${runId}/snapshots/${index}`),
   regions: (runId: string, gc: number | "end") => request<RegionGraph>(`/api/runs/${runId}/regions?gc=${gc}`),
+  benchmarks: () => request<BenchmarkListing[]>("/api/benchmarks"),
+  benchmark: (id: string) => request<BenchmarkSummary>(`/api/benchmarks/${encodeURIComponent(id)}`),
   cancel: (runId: string) => request<unknown>(`/api/runs/${runId}/cancel`, json({}))
 };

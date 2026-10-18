@@ -4,6 +4,8 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { api, ApiFailure } from "./api";
 import { AstPanel } from "./components/AstPanel";
 import { HeapGraphPanel } from "./components/HeapGraphPanel";
+import { BenchmarkPanel } from "./components/BenchmarkPanel";
+import { ComparePanel } from "./components/ComparePanel";
 import { RegionPanel } from "./components/RegionPanel";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { useTrace } from "./useTrace";
@@ -24,6 +26,7 @@ function offsetOf(source: string, line: number, column: number): number {
 
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [bottomTab, setBottomTab] = useState<"output" | "compare" | "benchmarks">("output");
   const [leftTab, setLeftTab] = useState<"ast" | "stats">("ast");
   const [heapTab, setHeapTab] = useState<"graph" | "regions" | "timeline">("graph");
   const [regionFilter, setRegionFilter] = useState<number | null>(null);
@@ -220,13 +223,25 @@ export function App() {
         <PanelResizeHandle className="handle horizontal" />
         <Panel defaultSize={24} minSize={8}>
           <div className="tabs" role="tablist">
-            <button role="tab" aria-selected="true">
+            <button role="tab" aria-selected={bottomTab === "output"} onClick={() => setBottomTab("output")}>
               Output
+            </button>
+            <button role="tab" aria-selected={bottomTab === "compare"} onClick={() => setBottomTab("compare")}>
+              Compare
+            </button>
+            <button role="tab" aria-selected={bottomTab === "benchmarks"} onClick={() => setBottomTab("benchmarks")}>
+              Benchmarks
             </button>
           </div>
           <div className="tab-body">
-            <ErrorBoundary label="output">
-              <OutputPanel run={state.run} onJump={jump} />
+            <ErrorBoundary label={bottomTab}>
+              {bottomTab === "output" ? (
+                <OutputPanel run={state.run} onJump={jump} />
+              ) : bottomTab === "compare" ? (
+                <ComparePanel history={state.history} />
+              ) : (
+                <BenchmarkPanel />
+              )}
             </ErrorBoundary>
           </div>
         </Panel>

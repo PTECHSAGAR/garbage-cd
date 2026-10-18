@@ -10,6 +10,8 @@ export interface State {
   run: RunResult | null;
   requestError: string | null;
   customOptions: CustomOptions;
+  /** Finished runs of this session, newest last, for the Compare tab. */
+  history: RunResult[];
 }
 
 export type Action =
@@ -31,7 +33,8 @@ export const initialState: State = {
   runId: null,
   run: null,
   requestError: null,
-  customOptions: { regionSize: 0, slotReuse: false }
+  customOptions: { regionSize: 0, slotReuse: false },
+  history: []
 };
 
 export function reducer(state: State, action: Action): State {
@@ -70,8 +73,15 @@ export function reducer(state: State, action: Action): State {
       return { ...state, sampleName: "", sources: { ...state.sources, [state.engine]: action.source } };
     case "started":
       return { ...state, runId: action.runId, run: null, requestError: null };
-    case "progress":
-      return action.run.runId === state.runId ? { ...state, run: action.run } : state;
+    case "progress": {
+      if (action.run.runId !== state.runId) return state;
+      const finished = action.run.status !== "running" && action.run.status !== "queued";
+      const history =
+        finished && !state.history.some((item) => item.runId === action.run.runId)
+          ? [...state.history, action.run].slice(-10)
+          : state.history;
+      return { ...state, run: action.run, history };
+    }
     case "failed":
       return { ...state, requestError: action.message };
     case "options":

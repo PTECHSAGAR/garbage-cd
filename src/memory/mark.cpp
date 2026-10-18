@@ -21,15 +21,17 @@ void Heap::mark(CollectionRecord& record) {
 template <bool RecordParents>
 void Heap::markImpl(CollectionRecord& record) {
     const auto start = std::chrono::steady_clock::now();
+    if constexpr (RecordParents) {
+        discoveries_.assign(objects_.size(), std::nullopt);
+    } else if (!discoveries_.empty()) {
+        discoveries_.clear();  // an earlier observed collection's forest is stale now
+    }
     // Start every collection with all objects unmarked.
     for (std::size_t i = 0; i < objects_.size(); ++i) {
         ++record.slotsScanned;
         if (slotInUse_[i] && objects_[i] != nullptr) {
             ++record.liveBefore;
             objects_[i]->marked = false;
-            if constexpr (RecordParents) {
-                objects_[i]->discoveredBy.reset();
-            }
         }
     }
 
@@ -60,7 +62,7 @@ void Heap::markImpl(CollectionRecord& record) {
             object->marked = true;
             ++record.marked;
             const MarkDiscovery discovery{item.parent, item.field, item.root};
-            object->discoveredBy = discovery;
+            discoveries_[slotOf(item.handle)] = discovery;
             observer_->onMarkVisit(item.handle, discovery);
 
             for (const auto& field : object->fields()) {

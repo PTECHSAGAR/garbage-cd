@@ -616,7 +616,50 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
       .send(await readFile(file));
   });
 
-  app.get("/api/benchmarks", async () => []);
+  // Committed benchmark results: bench/results/<id>/summary.json. Quick (pipeline-check) runs are
+  // never listed, and request ids are only ever matched against directory listings.
+  const benchmarkRoot = config.benchmarkRoot;
+  const readBenchmark = async (id: string): Promise<{ summary: Record<string, unknown> } | { error: string }> => {
+    try {
+      const summary = JSON.parse(await readFile(join(benchmarkRoot, id, "summary.json"), "utf8")) as Record<string, unknown>;
+      const problems = validator.validate("benchmark-summary.schema.json", summary);
+      if (problems.length > 0) return { error: problems.join("; ") };
+      const environment = summary.environment as { quick?: boolean } | undefined;
+      if (environment?.quick === true) return { error: "quick run" };
+      return { summary };
+    } catch (error) {
+      return { error: String(error) };
+    }
+  };
+  app.get("/api/benchmarks", async () => {
+    let names: string[] = [];
+    try {
+      names = (await readdir(benchmarkRoot)).sort().reverse();
+    } catch {
+      return [];
+    }
+    const listing: Array<{ id: string; createdAt: string }> = [];
+    for (const name of names) {
+      const result = await readBenchmark(name);
+      if ("summary" in result) listing.push({ id: name, createdAt: String(result.summary.createdAt ?? "") });
+    }
+    return listing;
+  });
+  app.get<{ Params: { id: string } }>("/api/benchmarks/:id", async (request, reply) => {
+    let names: string[] = [];
+    try {
+      names = await readdir(benchmarkRoot);
+    } catch {
+      names = [];
+    }
+    const name = names.find((candidate) => candidate === request.params.id);
+    if (!name) return reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "Benchmark result not found") });
+    const result = await readBenchmark(name);
+    if ("error" in result) {
+      return reply.code(result.error === "quick run" ? 404 : 500).send({ error: structuredError(result.error === "quick run" ? "BAD_REQUEST" : "SCHEMA_VIOLATION", "controller", result.error) });
+    }
+    return reply.send(result.summary);
+  });
   const traceRun = (id: string, reply: FastifyReply): StoredRun | null => {
     const run = runs.get(id);
     if (!run) {
