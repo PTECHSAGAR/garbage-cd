@@ -214,13 +214,13 @@ describe("HeapGraphPanel", () => {
     expect(screen.queryByTestId("graph-canvas")).toBeNull();
   });
 
-  it("refuses a 2,001-object snapshot and points at the region view", async () => {
+  it("refuses a 2,001-object snapshot and points at the Regions tab", async () => {
     const objects = Array.from({ length: 2_001 }, (_, index) => obj(String(index)));
     stubSnapshots({ "/api/runs/run1/snapshots/0": snapshot({ objects, totalObjects: 2_001 }) });
     render(panel(run()));
     const card = await screen.findByRole("alert");
     expect(card.textContent).toContain("too large");
-    expect(card.textContent).toContain("region view");
+    expect(card.textContent).toContain("Regions tab");
     expect(screen.queryByTestId("graph-canvas")).toBeNull();
   });
 

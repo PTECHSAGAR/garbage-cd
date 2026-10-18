@@ -14,6 +14,7 @@
 
 #include "gc_interface.hpp"
 #include "memory/heap.hpp"
+#include "random_ops.hpp"
 
 namespace {
 
@@ -71,9 +72,13 @@ std::size_t choose(std::mt19937_64& rng, std::size_t upperBound) {
     return static_cast<std::size_t>(rng() % upperBound);
 }
 
-void runSeed(std::uint64_t seed) {
+void runSeed(std::uint64_t seed, const testops::Variant& variant) {
     std::mt19937_64 rng(seed);
-    memory::Heap concrete;
+    memory::Heap concrete(variant.options);
+    testops::NullObserver observer;
+    if (variant.observer) {
+        concrete.setObserver(&observer);
+    }
     gc::IHeap& heap = concrete;
     ObjectMap objects;
     RootMap roots;
@@ -83,6 +88,10 @@ void runSeed(std::uint64_t seed) {
     std::size_t freedTotal = 0;
 
     for (std::size_t op = 0; op < operationCount; ++op) {
+        // I6 after every operation for the first 200 seeds, and every 16th operation otherwise.
+        if (op > 0 && variant.options.regionSize != 0 && (seed <= 200 || op % 16 == 0)) {
+            concrete.verifyRegions();
+        }
         const std::size_t kind = choose(rng, 5);
         if (kind == 0 || handles.empty()) {
             const gc::ObjectHandle handle = heap.allocate();
@@ -122,6 +131,7 @@ void runSeed(std::uint64_t seed) {
                 }
             }
             heap.collect();
+            concrete.verifyInvariants();
             ++collectionCount;
             freedTotal += expectedFreed;
 
@@ -154,7 +164,10 @@ void runSeed(std::uint64_t seed) {
 int main() {
     const std::uint64_t seedCount = seedCountFromEnvironment();
     for (std::uint64_t seed = 0; seed < seedCount; ++seed) {
-        runSeed(seed + 1);
+        for (const auto& variant : testops::allVariants()) {
+            runSeed(seed + 1, variant);
+        }
     }
-    std::cout << "gc_property_tests: " << seedCount << " seeds passed\n";
+    std::cout << "gc_property_tests: " << seedCount << " seeds x "
+              << testops::allVariants().size() << " variants passed\n";
 }

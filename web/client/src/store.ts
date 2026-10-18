@@ -1,4 +1,5 @@
 import type { Engine, RunResult, Sample } from "@gcd/shared";
+import type { CustomOptions } from "./api";
 
 export interface State {
   engine: Engine;
@@ -8,6 +9,7 @@ export interface State {
   runId: string | null;
   run: RunResult | null;
   requestError: string | null;
+  customOptions: CustomOptions;
 }
 
 export type Action =
@@ -18,6 +20,7 @@ export type Action =
   | { type: "started"; runId: string }
   | { type: "progress"; run: RunResult }
   | { type: "failed"; message: string }
+  | { type: "options"; options: Partial<CustomOptions> }
   | { type: "reset" };
 
 export const initialState: State = {
@@ -27,7 +30,8 @@ export const initialState: State = {
   sources: { jvm: "", custom: "" },
   runId: null,
   run: null,
-  requestError: null
+  requestError: null,
+  customOptions: { regionSize: 0, slotReuse: false }
 };
 
 export function reducer(state: State, action: Action): State {
@@ -70,6 +74,8 @@ export function reducer(state: State, action: Action): State {
       return action.run.runId === state.runId ? { ...state, run: action.run } : state;
     case "failed":
       return { ...state, requestError: action.message };
+    case "options":
+      return { ...state, customOptions: { ...state.customOptions, ...action.options } };
     case "reset":
       return { ...state, run: null, runId: null, requestError: null };
   }

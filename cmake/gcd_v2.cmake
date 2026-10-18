@@ -42,6 +42,9 @@ endif()
 gcd_v2_add_executable(gc_correctness_tests tests/v2/gc_correctness_tests.cpp)
 gcd_v2_add_executable(gc_property_tests tests/v2/gc_property_tests.cpp)
 gcd_v2_add_executable(diagnostics_tests tests/v2/diagnostics_tests.cpp)
+gcd_v2_add_executable(region_tests tests/v2/region_tests.cpp)
+gcd_v2_add_executable(handle_reuse_tests tests/v2/handle_reuse_tests.cpp)
+gcd_v2_add_executable(differential_tests tests/v2/differential_tests.cpp)
 gcd_v2_add_executable(
     event_buffer_tests tests/v2/event_buffer_tests.cpp
     tools/gcd_runner/event_buffer.cpp)
@@ -58,6 +61,7 @@ gcd_v2_add_executable(
     gcd_runner tools/gcd_runner/main.cpp
     tools/gcd_runner/event_buffer.cpp
     tools/gcd_runner/snapshot_writer.cpp
+    tools/gcd_runner/region_writer.cpp
     tools/gcd_runner/tracing_heap.cpp
     tools/gcd_runner/spans.cpp
     tools/gcd_runner/toy_ast_json.cpp)
@@ -77,7 +81,8 @@ if(TARGET gcd_runner)
 endif()
 
 foreach(test_target IN ITEMS gc_correctness_tests gc_property_tests diagnostics_tests
-                            event_buffer_tests snapshot_tests)
+                            event_buffer_tests snapshot_tests region_tests handle_reuse_tests
+                            differential_tests)
     if(TARGET ${test_target})
         add_test(NAME ${test_target} COMMAND ${test_target})
     endif()

@@ -88,6 +88,21 @@
         }
       }
     },
+    "regionGraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "gcIndex", "point", "regionCount", "verified"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "gcIndex": { "type": ["integer", "null"], "minimum": 0 },
+          "point": { "type": "string", "enum": ["gc_end", "program_end"] },
+          "regionCount": { "type": "integer", "minimum": 0 },
+          "verified": { "type": "boolean" }
+        }
+      }
+    },
     "regionOverview": { "type": "object" }
   },
   "$defs": {

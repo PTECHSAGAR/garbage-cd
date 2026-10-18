@@ -280,6 +280,29 @@ int main() {
   const usage = spawnSync(runner, ["--unknown"], { encoding: "utf8" });
   assert.equal(usage.status, 3);
 
+  // Regions and slot reuse (Phase 6): flags are validated, and variants never change reclamation.
+  const regionProgram = "a = new Object();\nb = new Object();\na.n = b;\nc = new Object();\nc = null;\ngc();\n";
+  const plain = runCase("variant-plain", regionProgram, 0);
+  const regionDirectory = path.join(temporaryDirectory, "regions");
+  const variant = runCase("variant-both", regionProgram, 0, null, [
+    "--region-size", "16", "--slot-reuse", "--regions-dir", regionDirectory,
+  ]);
+  assert.deepEqual(variant.engineResult.runtime.heap, { regionSize: 16, slotReuse: true, observer: false });
+  assert.deepEqual(
+    variant.engineResult.collections.map((c) => [c.freed.value, c.liveAfter.value]),
+    plain.engineResult.collections.map((c) => [c.freed.value, c.liveAfter.value]),
+  );
+  assert.deepEqual(variant.engineResult.regionGraphs.map((g) => g.point), ["gc_end", "program_end"]);
+  assert.ok(variant.engineResult.regionGraphs.every((g) => g.verified));
+  const regionDocument = JSON.parse(fs.readFileSync(path.join(regionDirectory, "region-0.json"), "utf8"));
+  assert.equal(regionDocument.schema, "gcd.region-graph/1");
+  assert.equal(regionDocument.regions[0].freedLastGc, 1);
+  assert.equal(regionDocument.regions[0].intraEdges, 1);
+  for (const bad of [["--region-size", "48"], ["--region-size", "1"], ["--regions-dir", temporaryDirectory]]) {
+    const rejected = spawnSync(runner, ["--source", path.join(temporaryDirectory, "variant-plain.gcd"), "--result", path.join(temporaryDirectory, "bad.json"), ...bad], { encoding: "utf8" });
+    assert.equal(rejected.status, 3, `${bad.join(" ")} should be a usage error`);
+  }
+
   console.log("runner tests passed");
 } finally {
   fs.rmSync(temporaryDirectory, { recursive: true, force: true });

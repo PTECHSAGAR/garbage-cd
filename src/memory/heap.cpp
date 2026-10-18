@@ -7,16 +7,41 @@
 
 namespace memory {
 
+static_assert(sizeof(std::size_t) == 8, "slot-reuse handle encoding needs 64-bit size_t");
+
+Heap::Heap(const Options& options) : options_(options), regions_(options.regionSize) {
+    const std::uint32_t size = options.regionSize;
+    if (size != 0 && (size & (size - 1)) != 0) {
+        throw std::invalid_argument("Heap: region size must be 0 or a power of two");
+    }
+}
+
 gc::ObjectHandle Heap::allocate() {
     auto object = std::make_unique<Object>();
     object->allocSeq = stats_.totalAllocations + 1;
     object->allocStatement = currentStatement_;
-    objects_.push_back(std::move(object));
-    slotInUse_.push_back(true);
+    std::size_t slot;
+    if (options_.slotReuse && !freeSlots_.empty()) {
+        slot = freeSlots_.back();
+        freeSlots_.pop_back();
+        objects_[slot] = std::move(object);
+        slotInUse_[slot] = true;
+    } else {
+        if (objects_.size() >= 0xFFFFFFFEull) {
+            throw std::length_error("Heap: slot index space exhausted");
+        }
+        slot = objects_.size();
+        objects_.push_back(std::move(object));
+        slotInUse_.push_back(true);
+        if (options_.slotReuse) {
+            generations_.push_back(1);
+        }
+    }
     stats_.totalAllocations++;
-
-    gc::ObjectHandle handle(objects_.size() - 1);
-    return handle;
+    if (regions_.enabled()) {
+        regions_.onAllocate(slot);
+    }
+    return handleFor(slot);
 }
 
 void Heap::setRoot(const std::string& name, gc::ObjectHandle handle) {
@@ -30,6 +55,22 @@ void Heap::clearRoot(const std::string& name) {
 void Heap::setField(gc::ObjectHandle obj, const std::string& field, gc::ObjectHandle target) {
     Object* object = resolve(obj);
     if (object != nullptr) {
+        // Reference-integrity hardening (E.3): a valid handle that no longer resolves is
+        // stored as null. mark() already ignored such handles, so reachability is unchanged.
+        if (target.isValid() && resolve(target) == nullptr) {
+            target = gc::ObjectHandle::invalid();
+            ++diagnostics_.staleWritesRejected;
+        }
+        if (regions_.enabled()) {
+            // Write barrier: keep region edge counts equal to the live reference fields.
+            const gc::ObjectHandle previous = object->getField(field);
+            if (previous.isValid()) {
+                regions_.onEdgeRemoved(slotOf(obj), slotOf(previous));
+            }
+            if (target.isValid()) {
+                regions_.onEdgeAdded(slotOf(obj), slotOf(target));
+            }
+        }
         const bool isNewField = object->fields().find(field) == object->fields().end();
         object->setField(field, target);
         if (isNewField) {
@@ -53,11 +94,17 @@ void Heap::collect() {
     if (observer_) {
         observer_->onCollectionBegin(record.gcIndex);
     }
+    if (regions_.enabled()) {
+        regions_.beginCollection();
+    }
     mark(record);
     if (observer_) {
         observer_->onMarkComplete(makeView());
     }
     sweep(record);
+    if (regions_.enabled()) {
+        regions_.endCollection();
+    }
     record.totalNs = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - start)
@@ -101,7 +148,12 @@ HeapView Heap::makeView() const {
         }
         const Object& object = *objects_[i];
         HeapObjectView objectView;
-        objectView.handle = gc::ObjectHandle(i);
+        objectView.handle = handleFor(i);
+        objectView.slot = i;
+        objectView.generation = options_.slotReuse ? generations_[i] : 0;
+        if (regions_.enabled()) {
+            objectView.region = regions_.regionOf(i);
+        }
         objectView.allocSeq = object.allocSeq;
         objectView.allocStatement = object.allocStatement;
         objectView.marked = object.marked;
@@ -138,6 +190,26 @@ void Heap::verifyInvariants() const {
     for (const auto& root : roots_) {
         if (root.second.isValid() && resolve(root.second) == nullptr) {
             fail("I1 root handle does not resolve");
+        }
+    }
+    verifyRegions();
+    if (options_.slotReuse) {
+        std::unordered_set<std::size_t> seen;
+        for (const std::size_t slot : freeSlots_) {
+            if (slot >= objects_.size() || slotInUse_[slot] || !seen.insert(slot).second) {
+                fail("I8 free list holds an in-use, unknown, or duplicate slot");
+            }
+        }
+    }
+    // I4: every stored reference field of an in-use object resolves.
+    for (std::size_t i = 0; i < objects_.size(); ++i) {
+        if (!slotInUse_[i] || objects_[i] == nullptr) {
+            continue;
+        }
+        for (const auto& field : objects_[i]->fields()) {
+            if (field.second.isValid() && resolve(field.second) == nullptr) {
+                fail("I4 field target does not resolve");
+            }
         }
     }
 
@@ -186,7 +258,7 @@ void Heap::verifyInvariants() const {
         const gc::ObjectHandle handle = worklist.back();
         worklist.pop_back();
         Object* object = resolve(handle);
-        if (object == nullptr || !reachable.insert(handle.raw()).second) {
+        if (object == nullptr || !reachable.insert(slotOf(handle)).second) {
             continue;
         }
         for (const auto& field : object->fields()) {
@@ -216,9 +288,9 @@ void Heap::verifyInvariants() const {
         }
         std::unordered_set<std::size_t> path;
         const Object* current = &object;
-        std::size_t currentHandle = i;
+        std::size_t currentSlot = i;
         while (current->discoveredBy && current->discoveredBy->parent) {
-            if (!path.insert(currentHandle).second) {
+            if (!path.insert(currentSlot).second) {
                 fail("I7 mark-forest contains a cycle");
             }
             const MarkDiscovery& discovery = *current->discoveredBy;
@@ -227,10 +299,10 @@ void Heap::verifyInvariants() const {
             }
             const Object* parent = resolve(*discovery.parent);
             if (parent == nullptr || parent->getField(*discovery.field) !=
-                                         gc::ObjectHandle(currentHandle)) {
+                                         handleFor(currentSlot)) {
                 fail("I7 parent discovery is not a real field edge");
             }
-            currentHandle = discovery.parent->raw();
+            currentSlot = slotOf(*discovery.parent);
             current = parent;
         }
         if (!current->discoveredBy || !current->discoveredBy->root ||
@@ -238,17 +310,138 @@ void Heap::verifyInvariants() const {
             fail("I7 mark-forest path does not terminate at a root");
         }
         const auto root = roots_.find(*current->discoveredBy->root);
-        if (root == roots_.end() || root->second != gc::ObjectHandle(currentHandle)) {
+        if (root == roots_.end() || root->second != handleFor(currentSlot)) {
             fail("I7 root discovery is not a real root edge");
         }
     }
 }
 
+std::size_t Heap::slotOf(gc::ObjectHandle handle) const {
+    return options_.slotReuse ? static_cast<std::size_t>(handle.raw() & 0xFFFFFFFFull)
+                              : handle.raw();
+}
+
+gc::ObjectHandle Heap::handleFor(std::size_t slot) const {
+    if (!options_.slotReuse) {
+        return gc::ObjectHandle(slot);
+    }
+    return gc::ObjectHandle((static_cast<std::size_t>(generations_[slot]) << 32) | slot);
+}
+
 Object* Heap::resolve(gc::ObjectHandle handle) const {
-    if (!handle.isValid() || handle.raw() >= objects_.size() || !slotInUse_[handle.raw()]) {
+    if (!handle.isValid()) {
         return nullptr;
     }
-    return objects_[handle.raw()].get();
+    const std::size_t slot = slotOf(handle);
+    if (slot >= objects_.size() || !slotInUse_[slot]) {
+        return nullptr;
+    }
+    if (options_.slotReuse && (handle.raw() >> 32) != generations_[slot]) {
+        return nullptr;
+    }
+    return objects_[slot].get();
+}
+
+void Heap::setGenerationLimitForTesting(std::uint32_t limit) {
+    generationLimit_ = limit;
+}
+
+void Heap::verifyRegions() const {
+    if (!regions_.enabled()) {
+        return;
+    }
+    const auto fail = [](const char* message) {
+        throw std::logic_error(std::string("Heap invariant failed: ") + message);
+    };
+    std::vector<std::uint64_t> live;
+    std::vector<std::uint64_t> intra;
+    std::unordered_map<std::uint64_t, std::uint32_t> cross;
+    const auto grow = [&](std::size_t region) {
+        if (region >= live.size()) {
+            live.resize(region + 1, 0);
+            intra.resize(region + 1, 0);
+        }
+    };
+    for (std::size_t i = 0; i < objects_.size(); ++i) {
+        if (!slotInUse_[i] || objects_[i] == nullptr) {
+            continue;
+        }
+        const std::size_t from = regions_.regionOf(i);
+        grow(from);
+        ++live[from];
+        for (const auto& field : objects_[i]->fields()) {
+            if (!field.second.isValid()) {
+                continue;
+            }
+            const std::size_t to = regions_.regionOf(slotOf(field.second));
+            grow(to);
+            if (from == to) {
+                ++intra[from];
+            } else {
+                ++cross[RegionTable::key(from, to)];
+            }
+        }
+    }
+    const auto& table = regions_.regions();
+    const std::size_t count = std::max(table.size(), live.size());
+    for (std::size_t region = 0; region < count; ++region) {
+        const std::uint64_t tableLive = region < table.size() ? table[region].liveObjects : 0;
+        const std::uint64_t tableIntra = region < table.size() ? table[region].intraEdges : 0;
+        const std::uint64_t expectedLive = region < live.size() ? live[region] : 0;
+        const std::uint64_t expectedIntra = region < intra.size() ? intra[region] : 0;
+        if (tableLive != expectedLive) {
+            fail("I6 region live-object count differs from recomputation");
+        }
+        if (tableIntra != expectedIntra) {
+            fail("I6 region intra-edge count differs from recomputation");
+        }
+        if (region < table.size() && table[region].allocatedTotal < table[region].liveObjects) {
+            fail("I6 region allocated total is below its live count");
+        }
+    }
+    if (cross != regions_.crossEdges()) {
+        fail("I6 cross-region edge counts differ from recomputation");
+    }
+}
+
+RegionGraph Heap::regionGraph() const {
+    RegionGraph graph;
+    if (!regions_.enabled()) {
+        return graph;
+    }
+    graph.regionSize = regions_.regionSize();
+    try {
+        verifyRegions();
+        graph.verified = true;
+    } catch (const std::logic_error&) {
+        graph.verified = false;
+    }
+    const auto& table = regions_.regions();
+    std::vector<std::uint64_t> rootTargets(table.size(), 0);
+    for (const auto& root : roots_) {
+        if (root.second.isValid() && resolve(root.second) != nullptr) {
+            const std::size_t region = regions_.regionOf(slotOf(root.second));
+            if (region < rootTargets.size()) {
+                ++rootTargets[region];
+            }
+        }
+    }
+    for (std::size_t region = 0; region < table.size(); ++region) {
+        RegionInfo info;
+        info.id = region;
+        info.slotStart = static_cast<std::uint64_t>(region) * regions_.regionSize();
+        info.slotEnd = info.slotStart + regions_.regionSize() - 1;
+        info.stats = table[region];
+        info.rootTargets = rootTargets[region];
+        graph.regions.push_back(info);
+    }
+    for (const auto& edge : regions_.crossEdges()) {
+        graph.edges.push_back(RegionEdge{edge.first >> 32, edge.first & 0xFFFFFFFFull, edge.second});
+    }
+    std::sort(graph.edges.begin(), graph.edges.end(), [](const RegionEdge& a, const RegionEdge& b) {
+        return a.from != b.from ? a.from < b.from : a.to < b.to;
+    });
+    return graph;
 }
 
 // Heap::mark() is defined in mark.cpp.

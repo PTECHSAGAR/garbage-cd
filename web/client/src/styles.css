@@ -82,3 +82,4 @@ table { border-collapse: collapse; } .kv th { text-align: left; font-weight: 500
 .gc-marker line { stroke: var(--error); stroke-dasharray: 4 3; }
 .gc-marker text { fill: var(--error); font-size: 10px; }
 .gc-marker.clickable { cursor: pointer; }
+.topbar label { white-space: nowrap; }

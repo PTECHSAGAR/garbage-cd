@@ -4,6 +4,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { api, ApiFailure } from "./api";
 import { AstPanel } from "./components/AstPanel";
 import { HeapGraphPanel } from "./components/HeapGraphPanel";
+import { RegionPanel } from "./components/RegionPanel";
 import { TimelinePanel } from "./components/TimelinePanel";
 import { useTrace } from "./useTrace";
 import { EditorPanel, type EditorCommand, type EditorDiagnostic } from "./components/EditorPanel";
@@ -24,7 +25,9 @@ function offsetOf(source: string, line: number, column: number): number {
 export function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [leftTab, setLeftTab] = useState<"ast" | "stats">("ast");
-  const [heapTab, setHeapTab] = useState<"graph" | "timeline">("graph");
+  const [heapTab, setHeapTab] = useState<"graph" | "regions" | "timeline">("graph");
+  const [regionFilter, setRegionFilter] = useState<number | null>(null);
+  const [selectedRegion, setSelectedRegion] = useState<number | null>(null);
   const [snapshotIndex, setSnapshotIndex] = useState(0);
   const [command, setCommand] = useState<EditorCommand | null>(null);
   const trace = useTrace(state.run);
@@ -42,7 +45,11 @@ export function App() {
   const onProgress = useCallback((run: RunResult) => dispatch({ type: "progress", run }), []);
   const onPollError = useCallback((message: string) => dispatch({ type: "failed", message }), []);
   useRunPolling(state.runId, onProgress, onPollError);
-  useEffect(() => setSnapshotIndex(0), [state.runId]);
+  useEffect(() => {
+    setSnapshotIndex(0);
+    setRegionFilter(null);
+    setSelectedRegion(null);
+  }, [state.runId]);
 
   const jump = useCallback(
     (target: Jump) => {
@@ -80,7 +87,7 @@ export function App() {
 
   const run = async () => {
     try {
-      const { runId } = await api.startRun(state.engine, source);
+      const { runId } = await api.startRun(state.engine, source, state.customOptions);
       dispatch({ type: "started", runId });
     } catch (error) {
       dispatch({ type: "failed", message: error instanceof ApiFailure ? `${error.error.code}: ${error.message}` : String(error) });
@@ -103,6 +110,8 @@ export function App() {
         sampleName={state.sampleName}
         status={status}
         runId={state.runId}
+        customOptions={state.customOptions}
+        onOptions={(options) => dispatch({ type: "options", options })}
         onEngine={(engine) => dispatch({ type: "engine", engine })}
         onSample={(name) => dispatch({ type: "sample", name })}
         onRun={run}
@@ -162,18 +171,34 @@ export function App() {
                     <button role="tab" aria-selected={heapTab === "graph"} onClick={() => setHeapTab("graph")}>
                       Heap graph
                     </button>
+                    <button role="tab" aria-selected={heapTab === "regions"} onClick={() => setHeapTab("regions")}>
+                      Regions
+                    </button>
                     <button role="tab" aria-selected={heapTab === "timeline"} onClick={() => setHeapTab("timeline")}>
                       Timeline
                     </button>
                   </div>
                   <div className="tab-body">
-                    <ErrorBoundary label={heapTab === "graph" ? "heap graph" : "timeline"}>
+                    <ErrorBoundary label={heapTab === "graph" ? "heap graph" : heapTab === "regions" ? "regions" : "timeline"}>
                       {heapTab === "graph" ? (
                         <HeapGraphPanel
                           run={state.run}
                           selectedIndex={snapshotIndex}
                           onSelectIndex={setSnapshotIndex}
                           tracePartial={trace.partial}
+                          regionFilter={regionFilter}
+                          onClearRegionFilter={() => setRegionFilter(null)}
+                        />
+                      ) : heapTab === "regions" ? (
+                        <RegionPanel
+                          run={state.run}
+                          snapshotIndex={snapshotIndex}
+                          selectedRegion={selectedRegion}
+                          onSelectRegion={setSelectedRegion}
+                          onShowObjects={() => {
+                            setRegionFilter(selectedRegion);
+                            setHeapTab("graph");
+                          }}
                         />
                       ) : (
                         <TimelinePanel

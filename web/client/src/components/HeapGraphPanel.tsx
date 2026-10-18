@@ -24,12 +24,16 @@ export function HeapGraphPanel({
   run,
   selectedIndex,
   onSelectIndex,
-  tracePartial
+  tracePartial,
+  regionFilter = null,
+  onClearRegionFilter
 }: {
   run: RunResult | null;
   selectedIndex: number;
   onSelectIndex: (index: number) => void;
   tracePartial: boolean;
+  regionFilter?: number | null;
+  onClearRegionFilter?: () => void;
 }) {
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
@@ -70,7 +74,7 @@ export function HeapGraphPanel({
     };
   }, [runId, finished, wanted]);
 
-  const graph = useMemo(() => (load.status === "ready" ? buildGraph(load.snapshot) : null), [load]);
+  const graph = useMemo(() => (load.status === "ready" ? buildGraph(load.snapshot, regionFilter) : null), [load, regionFilter]);
   const why = useMemo<WhyAlive | null>(
     () => (load.status === "ready" && selectedNode && !selectedNode.startsWith("root:") ? whyAlive(load.snapshot, selectedNode) : null),
     [load, selectedNode]
@@ -115,7 +119,7 @@ export function HeapGraphPanel({
         <div className="error-card" role="alert">
           <strong>{load.tooLarge ? "Snapshot too large to draw." : "Snapshot could not be displayed."}</strong>
           <p>{load.message}</p>
-          {load.tooLarge ? <p className="muted">The region view (a later phase) is the intended way to inspect heaps this large.</p> : null}
+          {load.tooLarge ? <p className="muted">Use the Regions tab (start the run with a region size) to inspect heaps this large, then filter the graph to one region.</p> : null}
         </div>
       ) : null}
       {load.status === "ready" && graph ? (
@@ -126,6 +130,14 @@ export function HeapGraphPanel({
             </p>
           ) : null}
           {load.snapshot.objects.length === 0 ? <p className="muted">The heap is empty at this point.</p> : null}
+          {regionFilter !== null ? (
+            <p className="banner" role="status">
+              Showing only objects in region {regionFilter} ({graph.nodes.filter((node) => node.state !== "root").length} of {load.snapshot.objects.length}); edges leaving the region are hidden.{" "}
+              <button className="link" onClick={onClearRegionFilter}>
+                Show all
+              </button>
+            </p>
+          ) : null}
           <Suspense fallback={<p className="muted">Loading graph renderer…</p>}>
             <GraphCanvas
               graph={graph}

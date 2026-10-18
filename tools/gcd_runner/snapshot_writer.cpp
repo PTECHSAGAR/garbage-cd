@@ -170,11 +170,15 @@ std::string SnapshotWriter::serialize(const std::string& point,
         json.key("id");
         json.string(handleString(object->handle));
         json.key("slot");
-        json.number(static_cast<std::uint64_t>(object->handle.raw()));
+        json.number(object->slot);
         json.key("generation");
-        json.number(static_cast<std::uint64_t>(0));
+        json.number(object->generation);
         json.key("region");
-        json.nullValue();
+        if (object->region) {
+            json.number(*object->region);
+        } else {
+            json.nullValue();
+        }
         json.key("allocSeq");
         json.number(object->allocSeq);
         json.key("allocStatement");

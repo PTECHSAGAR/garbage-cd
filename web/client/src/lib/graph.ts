@@ -27,12 +27,13 @@ export interface HeapGraph {
 export const rootNodeId = (name: string) => `root:${name}`;
 
 /** Pure translation of a snapshot into nodes and edges; positions are chosen later by the layout. */
-export function buildGraph(snapshot: HeapSnapshot): HeapGraph {
-  const present = new Set(snapshot.objects.map((object) => object.id));
+export function buildGraph(snapshot: HeapSnapshot, onlyRegion: number | null = null): HeapGraph {
+  const objects = onlyRegion === null ? snapshot.objects : snapshot.objects.filter((object) => object.region === onlyRegion);
+  const present = new Set(objects.map((object) => object.id));
   const rootTargets = new Set(snapshot.roots.map((root) => root.target));
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
-  for (const object of snapshot.objects) {
+  for (const object of objects) {
     nodes.push({
       id: object.id,
       label: `#${object.id}`,

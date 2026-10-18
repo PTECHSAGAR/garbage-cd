@@ -15,6 +15,7 @@ export class ContractValidator {
     const names = [
       "custom-engine-result.schema.json",
       "heap-snapshot.schema.json",
+      "region-graph.schema.json",
       "trace-batch.schema.json",
       "jvm-engine-result.schema.json",
       "run-request.schema.json",

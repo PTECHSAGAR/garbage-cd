@@ -31,20 +31,6 @@ export async function executeCustom(
   await writeFile(sourcePath, request.source, { encoding: "utf8", mode: 0o600 });
   const options = request.options?.custom;
   const traceLevel = options?.traceLevel ?? "off";
-  if ((options?.regionSize ?? 0) !== 0 || (options?.slotReuse ?? false)) {
-    return {
-      status: "internal_error",
-      result: {
-        status: "internal_error",
-        output: { stdout: "", stderr: "", stdoutTruncated: false, stderrTruncated: false },
-        errors: [makeError(
-          "ENGINE_UNAVAILABLE",
-          "The configured custom runner does not support region-size or slot-reuse variants yet",
-          "request"
-        )]
-      }
-    };
-  }
   const args = [
     "--source", sourcePath,
     "--result", resultPath,
@@ -54,6 +40,9 @@ export async function executeCustom(
   ];
   if (traceLevel !== "off") args.push("--trace", tracePath);
   if (options?.snapshots) args.push("--snapshots-dir", snapshotsPath, "--snapshot-max-objects", "2000");
+  const regionSize = options?.regionSize ?? 0;
+  if (regionSize !== 0) args.push("--region-size", String(regionSize), "--regions-dir", join(runDir, "regions"));
+  if (options?.slotReuse) args.push("--slot-reuse");
   const limits = {
     cpuSeconds: 10,
     fileBytes: 128 * 1024 * 1024,

@@ -202,3 +202,32 @@ export interface TracePage {
 }
 
 export const MAX_SNAPSHOT_OBJECTS = 2_000;
+
+export interface RegionInfo {
+  id: number;
+  slotStart: number;
+  /** Inclusive: the last slot index of the region. */
+  slotEnd: number;
+  liveObjects: number;
+  allocatedTotal: number;
+  survivorsLastGc: number;
+  freedLastGc: number;
+  rootTargets: number;
+  intraEdges: number;
+}
+
+export interface RegionGraph {
+  schema: "gcd.region-graph/1";
+  runId: string;
+  index: number;
+  point: "gc_end" | "program_end";
+  regionSize: number;
+  gcIndex: number | null;
+  statementIndex: number;
+  verified: boolean;
+  regions: RegionInfo[];
+  edges: Array<{ from: number; to: number; count: number }>;
+}
+
+export const MAX_RENDERED_REGIONS = 1_000;
+export const REGION_SIZES = [0, 16, 32, 64, 128, 256] as const;

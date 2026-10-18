@@ -14,12 +14,21 @@
 #include "memory/diagnostics.hpp"
 #include "memory/observer.hpp"
 #include "memory/object.hpp"
+#include "memory/region_table.hpp"
 
 namespace memory {
 
 class Heap : public gc::IHeap {
 public:
-    Heap() = default;
+    struct Options {
+        // 0 disables regions; otherwise a power of two (E.2 uses 16..256).
+        std::uint32_t regionSize = 0;
+        // Reuse freed slots through a LIFO free list, with generation-checked handles (E.6).
+        bool slotReuse = false;
+    };
+
+    Heap() : Heap(Options{}) {}
+    explicit Heap(const Options& options);
 
     gc::ObjectHandle allocate() override;
 
@@ -38,6 +47,15 @@ public:
     HeapView view() const;
     void verifyInvariants() const;
 
+    const Options& options() const { return options_; }
+    // I6: throws std::logic_error if the region counters differ from a from-scratch recomputation.
+    void verifyRegions() const;
+    // Region metadata snapshot (empty when regions are disabled).
+    RegionGraph regionGraph() const;
+    // Test hook (G.1 row 12): lowers the generation at which a slot is retired.
+    void setGenerationLimitForTesting(std::uint32_t limit);
+    std::size_t slotCount() const { return objects_.size(); }
+
 private:
     // Mark-sweep phases. Implemented in mark.cpp / sweep.cpp respectively.
     // Not implemented yet -- currently no-ops.
@@ -48,6 +66,8 @@ private:
     HeapView makeView() const;
 
     Object* resolve(gc::ObjectHandle handle) const;
+    std::size_t slotOf(gc::ObjectHandle handle) const;
+    gc::ObjectHandle handleFor(std::size_t slot) const;
 
     std::vector<std::unique_ptr<Object>> objects_;   // slot index == ObjectHandle::raw()
     std::vector<bool> slotInUse_;                     // true if the slot holds a live allocation
@@ -56,6 +76,12 @@ private:
     GcDiagnostics diagnostics_;
     GcObserver* observer_ = nullptr;
     std::uint32_t currentStatement_ = 0;
+
+    Options options_;
+    RegionTable regions_;
+    std::vector<std::uint32_t> generations_;   // per slot; used only with slot reuse
+    std::vector<std::size_t> freeSlots_;       // LIFO free list; used only with slot reuse
+    std::uint32_t generationLimit_ = 0x80000000u;
 };
 
 } // namespace memory

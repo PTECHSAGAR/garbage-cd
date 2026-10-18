@@ -23,6 +23,9 @@ struct HeapFieldView {
 
 struct HeapObjectView {
     gc::ObjectHandle handle;
+    std::uint64_t slot = 0;
+    std::uint64_t generation = 0;           // 0 unless slot reuse is enabled
+    std::optional<std::uint64_t> region;    // set only when regions are enabled
     std::uint64_t allocSeq = 0;
     std::uint32_t allocStatement = 0;
     bool marked = false;

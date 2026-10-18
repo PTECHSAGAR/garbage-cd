@@ -1,4 +1,5 @@
-import type { Engine, RunStatus, Sample } from "@gcd/shared";
+import { REGION_SIZES, type Engine, type RunStatus, type Sample } from "@gcd/shared";
+import type { CustomOptions } from "../api";
 
 const banner: Record<Engine, string> = {
   jvm: "Standard JVM — Java 21 — runs on HotSpot's own heap",
@@ -15,6 +16,8 @@ export function TopBar({
   sampleName,
   status,
   runId,
+  customOptions,
+  onOptions,
   onEngine,
   onSample,
   onRun,
@@ -26,6 +29,8 @@ export function TopBar({
   sampleName: string;
   status: RunStatus | "idle";
   runId: string | null;
+  customOptions: CustomOptions;
+  onOptions: (options: Partial<CustomOptions>) => void;
   onEngine: (engine: Engine) => void;
   onSample: (name: string) => void;
   onRun: () => void;
@@ -54,6 +59,35 @@ export function TopBar({
           ))}
         </select>
       </label>
+      {engine === "custom" ? (
+        <>
+          <label title="Observational region metadata: address blocks of this many slots. 0 disables.">
+            Regions{" "}
+            <select
+              aria-label="Regions"
+              value={customOptions.regionSize}
+              disabled={active}
+              onChange={(e) => onOptions({ regionSize: Number(e.target.value) as CustomOptions["regionSize"] })}
+            >
+              {REGION_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size === 0 ? "off" : `${size} slots`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title="Reuse freed slots with generation-checked handles">
+            <input
+              type="checkbox"
+              aria-label="Slot reuse"
+              checked={customOptions.slotReuse}
+              disabled={active}
+              onChange={(e) => onOptions({ slotReuse: e.target.checked })}
+            />{" "}
+            Slot reuse
+          </label>
+        </>
+      ) : null}
       <button className="primary" disabled={active} onClick={onRun}>
         ▶ Run
       </button>

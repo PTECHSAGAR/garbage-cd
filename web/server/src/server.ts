@@ -494,12 +494,6 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
     if (runRequest.engine === "custom" && !existsSync(config.runnerPath)) {
       return reply.code(503).send({ error: structuredError("ENGINE_UNAVAILABLE", "execute", "Custom gcd_runner executable is not available") });
     }
-    if (
-      runRequest.engine === "custom" &&
-      ((runRequest.options?.custom?.regionSize ?? 0) !== 0 || (runRequest.options?.custom?.slotReuse ?? false))
-    ) {
-      return reply.code(503).send({ error: structuredError("ENGINE_UNAVAILABLE", "request", "This runner build does not support region-size or slot-reuse variants yet") });
-    }
     if (activeRunId) {
       return reply.code(409).send({ error: structuredError("BUSY", "request", "Another engine operation is active") });
     }
@@ -691,7 +685,39 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
     }
     return reply.send(snapshot);
   });
-  app.get("/api/runs/:id/regions", async (_request, reply) => reply.code(404).send({ error: "Region API is not enabled in Phase 2" }));
+  app.get<{ Params: { id: string }; Querystring: { gc?: string } }>("/api/runs/:id/regions", async (request, reply) => {
+    const run = traceRun(request.params.id, reply);
+    if (!run) return reply;
+    const requested = request.query.gc;
+    if (requested !== undefined && requested !== "end" && !/^(0|[1-9][0-9]{0,8})$/.test(requested)) {
+      return reply.code(400).send({ error: structuredError("BAD_REQUEST", "request", "gc must be a non-negative integer or \"end\"") });
+    }
+    const listed = ((run.result.engineResult as { regionGraphs?: unknown } | undefined)?.regionGraphs ?? []) as Array<{
+      index: number;
+      gcIndex: number | null;
+      point: string;
+    }>;
+    if (listed.length === 0) {
+      return reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "This run has no region graphs; start it with a region size above 0") });
+    }
+    const entry = requested === undefined || requested === "end"
+      ? listed.find((item) => item.point === "program_end")
+      : listed.find((item) => item.point === "gc_end" && item.gcIndex === Number(requested));
+    if (!entry) {
+      return reply.code(404).send({ error: structuredError("BAD_REQUEST", "request", "No region graph for that collection") });
+    }
+    let document: unknown;
+    try {
+      document = JSON.parse(await readFile(join(run.runDir, "regions", `region-${entry.index}.json`), "utf8"));
+    } catch (error) {
+      return reply.code(500).send({ error: structuredError("INTERNAL", "controller", `Region graph is unreadable: ${String(error)}`) });
+    }
+    const problems = validator.validate("region-graph.schema.json", document);
+    if (problems.length > 0) {
+      return reply.code(500).send({ error: structuredError("SCHEMA_VIOLATION", "controller", problems.join("; ")) });
+    }
+    return reply.send(document);
+  });
 
   app.addHook("onClose", async () => {
     for (const run of runs.values()) {

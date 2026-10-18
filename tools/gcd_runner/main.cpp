@@ -27,6 +27,7 @@
 #include "interpreter/parser.hpp"
 #include "json_writer.hpp"
 #include "memory/heap.hpp"
+#include "region_writer.hpp"
 #include "spans.hpp"
 #include "toy_ast_json.hpp"
 #include "tracing_heap.hpp"
@@ -182,6 +183,9 @@ struct Arguments {
     std::size_t batchSize = 1024;
     std::string snapshotsDirectory;
     std::size_t snapshotMaxObjects = 2000;
+    std::uint32_t regionSize = 0;
+    bool slotReuse = false;
+    std::string regionsDirectory;
 };
 
 struct RunData {
@@ -208,6 +212,9 @@ struct RunData {
     std::vector<memory::CollectionRecord> collections;
     std::vector<std::uint64_t> collectionStatementIndices;
     std::vector<SnapshotRecord> snapshots;
+    std::vector<RegionGraphRecord> regionGraphs;
+    std::uint32_t regionSize = 0;
+    bool slotReuse = false;
     std::vector<RunnerError> errors;
 };
 
@@ -387,10 +394,13 @@ std::optional<Arguments> parseArguments(int argc, char** argv) {
 
     for (int i = 1; i < argc; ++i) {
         const std::string flag = argv[i];
-        if (i + 1 < argc &&
+        if (flag == "--slot-reuse") {
+            arguments.slotReuse = true;
+        } else if (i + 1 < argc &&
             (flag == "--source" || flag == "--result" || flag == "--run-id" ||
              flag == "--trace" || flag == "--trace-level" || flag == "--batch-size" ||
-             flag == "--snapshots-dir" || flag == "--snapshot-max-objects")) {
+             flag == "--snapshots-dir" || flag == "--snapshot-max-objects" ||
+             flag == "--region-size" || flag == "--regions-dir")) {
             const std::string value = argv[++i];
             if (flag == "--source") {
                 arguments.sourcePath = value;
@@ -417,6 +427,16 @@ std::optional<Arguments> parseArguments(int argc, char** argv) {
                     arguments.batchSize == 0) {
                     return std::nullopt;
                 }
+            } else if (flag == "--region-size") {
+                std::size_t parsedSize = 0;
+                if (!parseSize(value, 256, parsedSize) ||
+                    (parsedSize != 0 && parsedSize != 16 && parsedSize != 32 && parsedSize != 64 &&
+                     parsedSize != 128 && parsedSize != 256)) {
+                    return std::nullopt;
+                }
+                arguments.regionSize = static_cast<std::uint32_t>(parsedSize);
+            } else if (flag == "--regions-dir") {
+                arguments.regionsDirectory = value;
             } else if (flag == "--snapshots-dir") {
                 arguments.snapshotsDirectory = value;
             } else if (flag == "--snapshot-max-objects") {
@@ -432,7 +452,8 @@ std::optional<Arguments> parseArguments(int argc, char** argv) {
     if (arguments.sourcePath.empty() || arguments.resultPath.empty() ||
         (!arguments.runId.empty() && !isValidUlid(arguments.runId)) ||
         (arguments.tracePath.empty() && arguments.traceLevel != TraceLevel::Off) ||
-        (arguments.snapshotsDirectory.empty() && arguments.snapshotMaxObjects != 2000)) {
+        (arguments.snapshotsDirectory.empty() && arguments.snapshotMaxObjects != 2000) ||
+        (!arguments.regionsDirectory.empty() && arguments.regionSize == 0)) {
         return std::nullopt;
     }
     return arguments;
@@ -630,9 +651,9 @@ std::string serializeResult(const RunData& run) {
     writer.key("heap");
     writer.beginObject();
     writer.key("regionSize");
-    writer.number(static_cast<std::uint64_t>(0));
+    writer.number(static_cast<std::uint64_t>(run.regionSize));
     writer.key("slotReuse");
-    writer.boolean(false);
+    writer.boolean(run.slotReuse);
     writer.key("observer");
     writer.boolean(run.observerEnabled);
     writer.endObject();
@@ -738,6 +759,27 @@ std::string serializeResult(const RunData& run) {
         writer.number(snapshot.objectCount);
         writer.key("truncated");
         writer.boolean(snapshot.truncated);
+        writer.endObject();
+    }
+    writer.endArray();
+    writer.key("regionGraphs");
+    writer.beginArray();
+    for (const RegionGraphRecord& graph : run.regionGraphs) {
+        writer.beginObject();
+        writer.key("index");
+        writer.number(graph.index);
+        writer.key("gcIndex");
+        if (graph.gcIndex) {
+            writer.number(*graph.gcIndex);
+        } else {
+            writer.nullValue();
+        }
+        writer.key("point");
+        writer.string(graph.point);
+        writer.key("regionCount");
+        writer.number(graph.regionCount);
+        writer.key("verified");
+        writer.boolean(graph.verified);
         writer.endObject();
     }
     writer.endArray();
@@ -916,7 +958,16 @@ int runProgram(const Arguments& arguments) {
         return finishAndWrite(4);
     }
 
-    memory::Heap heap;
+    memory::Heap::Options heapOptions;
+    heapOptions.regionSize = arguments.regionSize;
+    heapOptions.slotReuse = arguments.slotReuse;
+    run.regionSize = arguments.regionSize;
+    run.slotReuse = arguments.slotReuse;
+    memory::Heap heap(heapOptions);
+    std::unique_ptr<RegionGraphWriter> regionWriter;
+    if (!arguments.regionsDirectory.empty()) {
+        regionWriter = std::make_unique<RegionGraphWriter>(arguments.regionsDirectory, run.runId);
+    }
     EventBuffer* activeEvents =
         eventBuffer && arguments.traceLevel != TraceLevel::Off ? eventBuffer.get() : nullptr;
     run.observerEnabled = activeEvents != nullptr || snapshotWriter != nullptr;
@@ -947,6 +998,12 @@ int runProgram(const Arguments& arguments) {
                 while (run.collections.size() < records.size()) {
                     run.collections.push_back(records[run.collections.size()]);
                     run.collectionStatementIndices.push_back(i);
+                    if (regionWriter) {
+                        // State after the sweep: survivors and per-GC frees are final.
+                        regionWriter->write("gc_end", heap.regionGraph(),
+                                            run.collections.back().gcIndex,
+                                            static_cast<std::uint32_t>(i));
+                    }
                 }
             } catch (const std::exception& exception) {
                 run.executionFailed = true;
@@ -975,7 +1032,17 @@ int runProgram(const Arguments& arguments) {
                                   static_cast<std::uint32_t>(run.statementsExecuted));
         (void)endSnapshot;
     }
-    if (!run.executionFailed) {
+    if (regionWriter) {
+        regionWriter->write("program_end", heap.regionGraph(), std::nullopt,
+                            static_cast<std::uint32_t>(run.statementsExecuted));
+        run.regionGraphs = regionWriter->records();
+        if (!regionWriter->error().empty()) {
+            run.errors.push_back(
+                RunnerError{"REGION_IO", "controller", regionWriter->error(), std::nullopt});
+            run.status = "internal_error";
+        }
+    }
+    if (!run.executionFailed && run.status != "internal_error") {
         run.status = "succeeded";
     }
     run.endedAt = timestamp();

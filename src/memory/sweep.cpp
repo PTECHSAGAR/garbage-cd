@@ -20,7 +20,15 @@ void Heap::sweep(CollectionRecord& record) {
             ++live;
         } else {
             if (observer_) {
-                observer_->onSweepFree(gc::ObjectHandle(i));
+                observer_->onSweepFree(handleFor(i));
+            }
+            if (regions_.enabled()) {
+                for (const auto& field : objects_[i]->fields()) {
+                    if (field.second.isValid()) {
+                        regions_.onEdgeRemoved(i, slotOf(field.second));
+                    }
+                }
+                regions_.onFree(i);
             }
             const std::uint64_t fieldCount = objects_[i]->fields().size();
             record.fieldNodesFreed += fieldCount;
@@ -28,6 +36,16 @@ void Heap::sweep(CollectionRecord& record) {
             objects_[i].reset();
             slotInUse_[i] = false;
             ++collected;
+            if (options_.slotReuse) {
+                // Invalidate every outstanding handle to this slot. A slot whose generation
+                // reaches the limit is retired rather than wrapped, so a stale handle can
+                // never alias a later object.
+                if (++generations_[i] >= generationLimit_) {
+                    ++diagnostics_.slotsRetired;
+                } else {
+                    freeSlots_.push_back(i);
+                }
+            }
         }
     }
 
