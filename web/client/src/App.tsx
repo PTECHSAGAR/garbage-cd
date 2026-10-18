@@ -38,6 +38,23 @@ export function App() {
   const active = isActive(state.run, state.runId);
   const status: RunStatus | "idle" = state.run?.status ?? (state.runId ? "running" : "idle");
 
+  const [setupProblems, setSetupProblems] = useState<string[]>([]);
+  useEffect(() => {
+    api
+      .health()
+      .then((health) => {
+        const problems: string[] = [];
+        if (!health.jdk.found) problems.push("No JDK was found: Java runs are unavailable. JDK 21 is required.");
+        else if (health.jdk.supported === false) {
+          problems.push(`JDK ${health.jdk.version} is in use; the GC-log parser and results are verified on JDK 21 only.`);
+        }
+        if (!health.javaAnalyzer.found) problems.push("The Java analyzer is not built (run java/build.sh).");
+        if (!health.customRunner.found) problems.push("The custom runtime runner (gcd_runner) is not built.");
+        setSetupProblems(problems);
+      })
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     api
       .samples()
@@ -121,6 +138,11 @@ export function App() {
         onStop={stop}
         onReset={() => dispatch({ type: "reset" })}
       />
+      {setupProblems.map((problem) => (
+        <div key={problem} className="banner" role="alert">
+          {problem}
+        </div>
+      ))}
       {state.requestError ? (
         <div className="banner" role="alert">
           {state.requestError}

@@ -46,7 +46,8 @@ const javaPath = javaCandidates.find((candidate) => {
 
 export const config: Config = {
   root,
-  runRoot: resolve(tmpdir(), "gcd-runs"),
+  // One run directory per controller port, so two controllers never sweep each other's runs.
+  runRoot: process.env.GCD_RUN_ROOT ? resolve(process.env.GCD_RUN_ROOT) : resolve(tmpdir(), `gcd-runs-${Number(process.env.GCD_PORT ?? 4177)}`),
   host: "127.0.0.1",
   port: Number(process.env.GCD_PORT ?? 4177),
   sourceBytes: 65_536,

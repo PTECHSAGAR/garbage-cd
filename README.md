@@ -1,12 +1,8 @@
 # garbage-cd
 
-Design and Implementation of a Mark-Sweep Garbage Collector Integrated
-with an Interpreted Language Runtime (Compiler Design, Review 2).
-
-A small interpreted language runtime with its own Mark-Sweep garbage
-collector. No existing GC or external libraries are used.
-
-The toy language supports only:
+A toy language with its own mark-sweep garbage collector, and a local web console that runs the same
+kind of program on that collector and Java on a stock JDK 21, side by side but never pretending they
+share a heap.
 
 ```
 a = new Object();
@@ -17,63 +13,90 @@ b = null;
 gc();
 ```
 
-- Integer values
-- `null`
-- Object allocation (`new Object()`)
-- Variable assignment
-- Object field references (`a.ref = b`)
-- `gc()`
+The toy language has integers, `null`, `new Object()`, assignment, field references (`a.ref = b`) and
+`gc()`. No functions, loops, classes or types. The collector is a non-moving, non-generational
+mark-sweep over a handle-indexed heap, with no external libraries.
 
-No functions, classes, modules, or type system.
+## What V2 adds
 
-## Status
+- **Dashboard** (React, CodeMirror, Cytoscape): editor, Java AST with exact source spans, per-engine
+  statistics where every number carries a provenance badge (measured, estimated, reconstructed,
+  unavailable), heap graph per collection with "Why alive?", event timeline, region graph, a Compare tab
+  that refuses unfair comparisons, and committed benchmark results.
+- **Controller** (Node 22, Fastify): loopback-only API, one run at a time, subprocess supervision with
+  timeouts, output caps, process-group kill and (on Linux) `prlimit`.
+- **Custom-runtime tooling** (`tools/gcd_runner`): runs a toy program statement by statement and emits
+  schema-validated JSON, bounded NDJSON event traces and heap snapshots.
+- **Collector refinements**, each switchable and verified not to change what is freed: mark spanning
+  forest, address regions with barrier-maintained cross-region counts, batched trace buffer, and slot
+  reuse with generation-checked handles.
+- **An evaluation**: differential and property tests over 8 variants, and a benchmark harness with
+  bootstrap confidence intervals. See [docs/v2/report.md](docs/v2/report.md) for results, including the
+  negative ones.
 
-Project skeleton only. Interfaces and class declarations are in place;
-the tokenizer, parser, interpreter execution, and mark/sweep algorithm
-are not implemented yet (see `TODO` comments in `src/`).
+## Quick start
 
-## Building
-
-Requires CMake 3.15+ and a C++17 compiler.
-
-```sh
-cmake -S . -B build
-cmake --build build
-```
-
-This produces:
-- `garbage_cd` -- the main executable
-- `interpreter_tests` -- smoke tests for the interpreter/runtime
-- `gc_tests` -- smoke tests for the memory subsystem
-
-Run tests with:
+Requires CMake 3.15+, a C++17 compiler, **JDK 21**, **Node 22** and npm (Python 3 only for `bench/`).
+Linux and WSL2 are the supported platforms; macOS works on a best-effort basis (no `prlimit`).
 
 ```sh
-ctest --test-dir build
+scripts/setup.sh --check   # tells you what is missing
+scripts/setup.sh           # builds the runner, the Java tools and the web workspaces
+scripts/start.sh           # http://127.0.0.1:4177/
 ```
 
-## Module Ownership
+`setup.sh` and `start.sh` find JDK 21 and Node 22 even when other versions are the system default.
 
-**Prateek** -- interpreter, lexer/parser, runtime environment, integration
-- `include/interpreter/`, `src/interpreter/`
-- `include/runtime/`, `src/runtime/`
-- `src/main.cpp`
-- `tests/interpreter_tests.cpp`
+> **Security.** The dashboard is a local, single-user tool. Submitted Java can read your files, open
+> network connections and start processes until its timeout; limits contain accidents, not hostile
+> code. Run it in a VM or WSL instance when using other people's programs.
+> See [docs/v2/security.md](docs/v2/security.md).
 
-**Akshat** -- managed heap, object representation, mark phase, sweep
-phase, memory reclamation, GC statistics
-- `include/memory/`, `src/memory/`
-- `tests/gc_tests.cpp`
+## Development
 
-**Shared** (the contract between the two sides, changed only by agreement)
-- `include/gc_interface.hpp`
+```sh
+# C++ (Debug runs every invariant check after each collection)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j && ctest --test-dir build
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DGCD_SANITIZE=ON   # AddressSanitizer + UBSan
+GCD_PROPERTY_SEEDS=10000 ./build/gc_property_tests                     # long seeded runs
 
-## Architecture
+# Java tools and the web workspaces (use JDK 21 and Node 22)
+java/build.sh
+cd web && npm ci && npm run build && npm run lint && npm test && npm run smoke
+npm run dev                  # controller with live reload (port 4177)
+npm run dev:client           # Vite dev server on http://127.0.0.1:5173, proxied to the controller
+```
 
-The interpreter never includes `memory/heap.hpp` or `memory/object.hpp`.
-It only depends on `gc::IHeap` and `gc::ObjectHandle` from
-`include/gc_interface.hpp`. `ObjectHandle` is an opaque id -- the
-interpreter can store, copy, and compare handles, but cannot inspect or
-dereference what they point to. `memory::Heap` implements `gc::IHeap`,
-so the mark-sweep internals can be changed freely without touching any
-interpreter code.
+Benchmarks: `bench/run_bench.sh` (about an hour; `--quick` checks the pipeline in seconds). Results are
+committed under `bench/results/`.
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| `include/`, `src/` | V1 interpreter and runtime, and the memory subsystem (`memory::Heap`, diagnostics, observer, `RegionTable`) |
+| `tools/gcd_runner/` | Custom-runtime runner: tracing heap, event buffer, snapshot and region writers, toy AST |
+| `tests/` | V1 smoke tests and `tests/v2/` (correctness matrix, property, differential, region, handle-reuse, runner) |
+| `java/` | JDK-only analyzer (AST, diagnostics, compile) and launcher (MXBean metrics) |
+| `web/` | npm workspaces: `shared` (types, comparison rules), `server` (controller), `client` (dashboard) |
+| `contracts/` | JSON Schemas (Draft 2020-12) and examples for every payload |
+| `bench/` | Benchmark harness, JVM workloads, analysis script, committed results |
+| `scripts/` | `setup.sh`, `start.sh` |
+| `docs/v2/` | Architecture, contracts, methodology, security, report, progress log |
+
+## Architecture in one paragraph
+
+The interpreter never includes `memory/heap.hpp`. It only sees `gc::IHeap` and the opaque
+`gc::ObjectHandle` from `include/gc_interface.hpp`, which V2 does not change. `memory::Heap`
+implements `gc::IHeap`; V2's runner wraps it in a decorator that records events, and a read-only
+`HeapView` plus an observer interface feed snapshots. See [docs/v2/architecture.md](docs/v2/architecture.md).
+
+## History and credits
+
+V1 was written as a two-person course project: the interpreter, lexer/parser, runtime environment and
+integration by Prateek; the managed heap, object representation, mark and sweep phases and GC
+statistics by Akshat. V1 files (`include/interpreter/`, `src/interpreter/`, `include/runtime/`,
+`src/runtime/`, `src/main.cpp`, `include/gc_interface.hpp`) are deliberately unchanged in V2 so the V1
+behaviour stays reproducible as benchmark variant A (git tag `v1-baseline`). V2 is maintained by the
+repository owner. Some comments inside the V1 interpreter headers still say "skeleton only"; they are
+stale and were left alone to keep those files byte-identical.

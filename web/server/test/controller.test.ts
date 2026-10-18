@@ -189,7 +189,7 @@ describe("controller behaviour", () => {
     })();
     expect(leftover).toBe("");
     expect(existsSync(config.runRoot)).toBe(true);
-    expect(readdirSync(config.runRoot).length).toBeLessThanOrEqual(20);
+    expect(readdirSync(config.runRoot).filter((name) => !name.startsWith(".")).length).toBeLessThanOrEqual(20);
   }, 120_000);
 });
 

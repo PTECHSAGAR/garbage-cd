@@ -44,7 +44,7 @@ export interface CustomOptions {
 
 export interface Health {
   status: string;
-  jdk: { found: boolean; version: string };
+  jdk: { found: boolean; version: string; supported?: boolean };
   customRunner: { found: boolean };
   javaAnalyzer: { found: boolean };
 }

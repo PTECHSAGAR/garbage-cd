@@ -13,6 +13,14 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/health") {
+        return respond({
+          status: "ok",
+          jdk: { found: true, version: "25.0.1", supported: false },
+          javaAnalyzer: { found: true },
+          customRunner: { found: false }
+        });
+      }
       if (url === "/api/samples") {
         return respond({
           jvm: [{ engine: "jvm", name: "Hello", source: "public class Hello {}" }],
@@ -58,6 +66,13 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("running"));
     await waitFor(() => expect(screen.getByLabelText("stdout").textContent).toBe("finished output"), { timeout: 3_000 });
     expect(screen.getByRole("status").textContent).toContain("succeeded");
+  });
+
+  it("tells the user when the JDK is not 21 or a tool is not built", async () => {
+    render(<App />);
+    expect(await screen.findByText(/JDK 25\.0\.1 is in use; .* JDK 21 only/)).toBeTruthy();
+    expect(screen.getByText(/gcd_runner\) is not built/)).toBeTruthy();
+    expect(screen.queryByText(/analyzer is not built/)).toBeNull();
   });
 
   it("switches engine and shows the custom-runtime banner", async () => {

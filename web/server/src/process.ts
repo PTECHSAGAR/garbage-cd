@@ -160,6 +160,9 @@ export function runProcess(
       }
       reject(error);
     });
+    // Anything the program left running in its process group (for example a child it started and
+    // did not wait for) must not outlive the run. This is a no-op when the group is empty.
+    child.once("exit", () => signalGroup("SIGKILL"));
     child.once("close", (exitCode, signal) => {
       if (settled) return;
       settled = true;

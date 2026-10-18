@@ -225,6 +225,41 @@ async function ensureRunRoot(config: Config): Promise<void> {
   await chmod(config.runRoot, 0o700);
 }
 
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return isRecord(error) && error.code === "EPERM";
+  }
+}
+
+/**
+ * One controller per run directory: the startup sweep kills "orphaned" process groups, which would
+ * be wrong if another live controller owned them. A stale lock (dead pid) is simply replaced.
+ */
+async function acquireRunRootLock(config: Config): Promise<() => Promise<void>> {
+  const lockPath = join(config.runRoot, ".controller.pid");
+  try {
+    const owner = Number((await readFile(lockPath, "utf8")).trim());
+    if (Number.isSafeInteger(owner) && owner > 1 && owner !== process.pid && isProcessAlive(owner)) {
+      throw new Error(`Another controller (pid ${owner}) is already using ${config.runRoot}`);
+    }
+  } catch (error) {
+    if (!(isRecord(error) && error.code === "ENOENT")) {
+      if (error instanceof Error && error.message.startsWith("Another controller")) throw error;
+    }
+  }
+  await writeFile(lockPath, `${process.pid}\n`, { encoding: "utf8", mode: 0o600 });
+  return async () => {
+    try {
+      if ((await readFile(lockPath, "utf8")).trim() === String(process.pid)) await rm(lockPath, { force: true });
+    } catch {
+      // the directory may already be gone
+    }
+  };
+}
+
 async function killOrphan(pidFile: string): Promise<void> {
   let content: string;
   try {
@@ -296,7 +331,8 @@ function validateRequestSecurity(request: FastifyRequest, reply: FastifyReply, p
     reply.code(403).send({ error: structuredError("BAD_REQUEST", "request", "Invalid Host header") });
     return false;
   }
-  const actualPort = parsedHost.port ? Number(parsedHost.port) : port;
+  // A Host header without a port means the default port (80); this server never listens there.
+  const actualPort = parsedHost.port ? Number(parsedHost.port) : 80;
   if (!allowedHosts.has(parsedHost.hostname.toLowerCase()) || actualPort !== port) {
     reply.code(403).send({ error: structuredError("BAD_REQUEST", "request", "Host is not allowed") });
     return false;
@@ -396,6 +432,17 @@ async function probeJdk(config: Config): Promise<void> {
 }
 
 export async function createServer(config: Config = defaultConfig): Promise<FastifyInstance> {
+  await ensureRunRoot(config);
+  const releaseLock = await acquireRunRootLock(config);
+  try {
+    return await buildServer(config, releaseLock);
+  } catch (error) {
+    await releaseLock();
+    throw error;
+  }
+}
+
+async function buildServer(config: Config, releaseLock: () => Promise<void>): Promise<FastifyInstance> {
   await sweepRunRoot(config);
   try {
     await probeJdk(config);
@@ -408,7 +455,28 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
   const samples = await loadSamples(config.root);
   const runs = new Map<string, StoredRun>();
   let activeRunId: string | undefined;
-  const app = Fastify({ logger: true, bodyLimit: 512 * 1024, trustProxy: false });
+  const app = Fastify({
+    logger: true,
+    bodyLimit: 512 * 1024,
+    trustProxy: false,
+    // Local single-user tool: bound how long a half-open or slow client can hold a socket.
+    requestTimeout: 30_000,
+    keepAliveTimeout: 5_000
+  });
+  app.addHook("onSend", async (request, reply, payload) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("x-frame-options", "DENY");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("cross-origin-resource-policy", "same-origin");
+    // The dashboard loads only its own scripts; CodeMirror injects <style> elements, hence the
+    // inline-style allowance. No third-party origins are ever contacted.
+    reply.header(
+      "content-security-policy",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    );
+    if (request.url.startsWith("/api/")) reply.header("cache-control", "no-store");
+    return payload;
+  });
   app.addHook("onRequest", async (request, reply) => {
     if (!validateRequestSecurity(request, reply, config.port)) return reply;
   });
@@ -425,7 +493,14 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
     return {
       status: "ok",
       controller: "2.0.0",
-      jdk: { found: jdkFound, version: config.jdkVersion, vendor: config.jdkVendor, ...(jdkError ? { error: jdkError } : {}) },
+      jdk: {
+        found: jdkFound,
+        version: config.jdkVersion,
+        vendor: config.jdkVendor,
+        // GC-log parsing and the golden fixtures are pinned to JDK 21; other majors may drift.
+        supported: jdkFound && /^21(\.|$)/.test(config.jdkVersion),
+        ...(jdkError ? { error: jdkError } : {})
+      },
       javaAnalyzer: { found: existsSync(config.javaJarPath) },
       customRunner: { found: existsSync(config.runnerPath), path: config.runnerPath },
       platformLimits: { prlimit: process.platform === "linux" ? "available" : "unsupported-platform" }
@@ -767,6 +842,7 @@ export async function createServer(config: Config = defaultConfig): Promise<Fast
       if (run.result.status === "running") run.abort.abort();
     }
     await Promise.all([...runs.values()].map((run) => run.completion).filter((item) => item !== undefined));
+    await releaseLock();
   });
   return app;
 }

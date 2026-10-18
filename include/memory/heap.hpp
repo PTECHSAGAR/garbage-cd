@@ -59,8 +59,9 @@ public:
     std::size_t slotCount() const { return objects_.size(); }
 
 private:
-    // Mark-sweep phases. Implemented in mark.cpp / sweep.cpp respectively.
-    // Not implemented yet -- currently no-ops.
+    // Mark-sweep phases, implemented in mark.cpp and sweep.cpp. The mark phase is a template on
+    // whether the mark spanning forest is recorded, so an unobserved collection does no
+    // parent bookkeeping.
     void mark(CollectionRecord& record);
     template <bool RecordParents>
     void markImpl(CollectionRecord& record);

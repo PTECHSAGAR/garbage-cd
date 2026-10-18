@@ -1,4 +1,5 @@
-// Smoke tests for the memory subsystem skeleton. Owned by Akshat.
+// Smoke tests for the memory subsystem (V1). Reclamation, invariants and the V2 variants are
+// covered by tests/v2/. Owned by Akshat.
 // Plain asserts, no external test framework.
 
 #include <cassert>
@@ -23,7 +24,7 @@ int main() {
     assert(statsBefore.totalAllocations == 2);
     assert(statsBefore.totalCollections == 0);
 
-    heap.collect(); // mark/sweep are no-ops in the skeleton
+    heap.collect(); // a and b are both reachable from root "a", so nothing is freed
 
     gc::GCStats statsAfter = heap.getStats();
     assert(statsAfter.totalCollections == 1);
